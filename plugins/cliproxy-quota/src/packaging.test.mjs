@@ -12,7 +12,7 @@ const plugin = fileURLToPath(new URL('../', import.meta.url));
 test('installed MCP launcher works from a different path with spaces and Unicode', { skip: process.platform !== 'win32', timeout: 15000 }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-package-'));
   const copied = path.join(directory, '插件 with spaces');
-  fs.cpSync(plugin, copied, { recursive: true });
+  await fs.promises.cp(plugin, copied, { recursive: true });
   const manifest = JSON.parse(fs.readFileSync(path.join(copied, '.mcp.json'), 'utf8'));
   const config = manifest.mcpServers.quota;
   assert.equal(config.cwd, '.');
