@@ -12,3 +12,6 @@ desktop-runtime.json
 desktop-startup-session.json
 desktop-startup-error.json
 desktop-launches/
+update-check.json
+installed-update.json
+updates/
