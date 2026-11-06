@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "quota": {
+      "tool_timeout_sec": 300,
+      "command": "powershell.exe",
+      "cwd": ".",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "./scripts/start-mcp.ps1"
+      ],
+      "startup_timeout_sec": 30
+    }
+  }
+}

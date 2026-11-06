@@ -1,0 +1,50 @@
+name: Test and package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test JavaScript and native behavior
+        shell: powershell
+        run: ./scripts/test.ps1
+      - name: Build Windows package
+        shell: powershell
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpa-quota-windows
+          path: dist/*
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpa-quota-windows
+          path: dist
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $manifest = Get-Content -Raw plugins/cliproxy-quota/.codex-plugin/plugin.json | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -ne "v$($manifest.version)") { throw 'Tag and plugin version differ.' }
+          gh release create $env:GITHUB_REF_NAME ./dist/* --verify-tag --title "CPA Quota $($manifest.version)" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed.' }

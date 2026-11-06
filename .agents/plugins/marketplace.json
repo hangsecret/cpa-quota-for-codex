@@ -1,0 +1,20 @@
+{
+  "plugins": [
+    {
+      "policy": {
+        "authentication": "ON_INSTALL",
+        "installation": "AVAILABLE"
+      },
+      "category": "Productivity",
+      "name": "cliproxy-quota",
+      "source": {
+        "source": "local",
+        "path": "./plugins/cliproxy-quota"
+      }
+    }
+  ],
+  "name": "cpa-quota",
+  "interface": {
+    "displayName": "CPA Quota for Codex"
+  }
+}

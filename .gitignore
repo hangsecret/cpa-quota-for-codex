@@ -1,0 +1,14 @@
+dist/
+work/
+node_modules/
+*.tmp
+*.bak
+*.log
+.env
+.env.*
+settings.json
+desktop-preferences.json
+desktop-runtime.json
+desktop-startup-session.json
+desktop-startup-error.json
+desktop-launches/
