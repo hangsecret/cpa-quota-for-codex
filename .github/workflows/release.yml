@@ -46,5 +46,9 @@ jobs:
         run: |
           $manifest = Get-Content -Raw plugins/cliproxy-quota/.codex-plugin/plugin.json | ConvertFrom-Json
           if ($env:GITHUB_REF_NAME -ne "v$($manifest.version)") { throw 'Tag and plugin version differ.' }
-          gh release create $env:GITHUB_REF_NAME ./dist/* --verify-tag --title "CPA Quota $($manifest.version)" --generate-notes
+          $update = Get-Content -Raw -Encoding UTF8 dist/update.json | ConvertFrom-Json
+          if ($update.version -ne $manifest.version) { throw 'Update manifest and plugin version differ.' }
+          $notes = "## $($manifest.version)`n`n$($update.notes)`n`nDownload the Windows ZIP and run Install.cmd. Restart Codex after installation."
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'release-notes.md'), $notes, (New-Object Text.UTF8Encoding($false)))
+          gh release create $env:GITHUB_REF_NAME ./dist/* --verify-tag --title "CPA Quota $($manifest.version)" --notes-file (Join-Path $env:RUNNER_TEMP 'release-notes.md')
           if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed.' }

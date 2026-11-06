@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { settings, saveSettings, queryQuota } from './quota.mjs';
 import { listModels, updateModel, activeModel } from './models.mjs';
 import { openDesktopPanel, autoStartDesktopPanel } from './pet-launch.mjs';
+import { currentVersion } from './version.mjs';
 
 const resourceUri = 'ui://cliproxy/desktop-launcher-v1.html';
 const icons = [{ src: 'data:image/png;base64,' + fs.readFileSync(new URL('pet/quota-icon.png', import.meta.url)).toString('base64'), mimeType: 'image/png', sizes: ['256x256'] }];
@@ -22,7 +23,7 @@ export const tools = [
 ];
 function publicSettings() {
   const config = settings();
-  return { baseUrl: config.baseUrl, apiVersion: config.apiVersion, configured: !!(config.encryptedKey || process.env.CLIPROXY_MANAGEMENT_KEY), backendVersion: '2.7.1' };
+  return { baseUrl: config.baseUrl, apiVersion: config.apiVersion, configured: !!(config.encryptedKey || process.env.CLIPROXY_MANAGEMENT_KEY), backendVersion: currentVersion };
 }
 export async function execute(name, args = {}) {
   if (name === 'open_desktop_panel') return openDesktopPanel();
@@ -64,7 +65,7 @@ async function dispatch(message) {
       });
     }
     await initialDesktopStart;
-    reply({ protocolVersion: params.protocolVersion === '2024-11-05' ? '2024-11-05' : '2025-11-25', capabilities: { tools: {}, resources: {} }, serverInfo: { name: 'cliproxy-quota', title: '额度与模型', icons, version: '2.7.1' } });
+    reply({ protocolVersion: params.protocolVersion === '2024-11-05' ? '2024-11-05' : '2025-11-25', capabilities: { tools: {}, resources: {} }, serverInfo: { name: 'cliproxy-quota', title: '额度与模型', icons, version: currentVersion } });
     return;
   }
   if (method === 'ping') return reply({});

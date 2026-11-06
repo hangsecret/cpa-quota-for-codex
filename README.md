@@ -2,17 +2,17 @@
 
 Codex 桌面版的「额度与模型」插件，附带紧凑的 Windows 悬浮窗。查看 CLIProxy 各账户的短周期、长周期剩余额度及重置时间，并跟随当前聊天模型优先显示匹配的账户。
 
-当前版本 **2.7.1**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
+当前版本 **2.8.0**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
 
 ## 快速安装
 
 ### 下载 ZIP 安装
 
-1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.7.1-windows.zip`。
+1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.8.0-windows.zip`。
 2. 解压到任意目录，双击 `Install.cmd`。安装器会寻找 Codex CLI 和可用的 Node，注册插件市场并安装插件。
 3. 完全退出并重新打开 Codex 桌面版。在悬浮窗「设置 → 连接」中填写自己的 CLIProxy 管理后台根地址、管理接口版本和管理密钥。
 
-安装器将插件市场文件保存在 `%LOCALAPPDATA%\CodexCLIProxyQuota\marketplace`。安装成功后可以删除下载的 ZIP 和解压目录。
+安装器将插件市场文件保存在 `%LOCALAPPDATA%\CodexCLIProxyQuota\marketplaces\版本号-安装标识`。安装成功后可以删除下载的 ZIP 和解压目录。
 
 管理密钥是 CLIProxy 管理后台的密钥，与模型调用 API Key 不同。首次安装的后台地址为空，需自行填写。
 
@@ -72,21 +72,38 @@ codex plugin add cliproxy-quota@cpa-quota
 | `desktop-startup-session.json` | 本次 Codex 运行的启动标记 |
 | `desktop-runtime.json` | 窗口及所属 Codex 进程信息 |
 | `desktop-startup-error.json` | 启动失败诊断信息 |
+| `update-check.json` | 最新 Release 信息和检查时间 |
+| `installed-update.json` | 已安装、等待重启的更新版本 |
 
 密钥也可通过 `CLIPROXY_MANAGEMENT_KEY` 环境变量提供。插件通过用户设置向所配置的管理站点查询配额，模型管理工具修改本机模型目录。仓库及安装包仅包含程序和源码，个人连接配置需在本机填写。
 
 ## 升级与卸载
 
-GitHub 安装可刷新市场并重新安装，然后完全退出并重启 Codex。
+### 在插件内更新
+
+2.8.0 起，悬浮窗「设置 → 关于与更新」可查看当前版本、最新版本、检查时间和更新说明。
+
+- 启动时检查 GitHub 最新 Release，检查结果缓存 24 小时。长时间运行时定期查看缓存是否到期。断网或 GitHub 不可用时可手动重试。
+- 发现新版后，悬浮窗底部显示版本提示，点击可进入更新设置。
+- 点击「检查更新」可立即查询。点击「下载并安装更新」会下载已发布的 Windows ZIP，校验 SHA256 并安装。
+- 安装完成后完全退出并重启 Codex。当前运行的窗口继续使用启动时的版本。
+- GitHub 与 ZIP 安装均通过 Release 包更新。使用插件内更新或新版 `Install.cmd` 后，`cpa-quota` 市场切换到本机的 Release 安装目录，后续继续使用插件内更新。
+- 安装前保留之前的插件市场快照，采用独立目录和单实例安装锁。安装失败时尝试恢复旧版，连接密钥和外观设置继续保存在用户数据目录。
+
+检查和下载仅访问本项目的 GitHub 发布文件。检查每 24 小时最多自动发起一次，手动操作可随时重试。缓存中的旧数据在查询失败时标记错误，需成功检查后才可安装。
+
+2.7.x 用户先手动安装一次 2.8.0 或更高版本，之后即可使用插件内更新。ZIP 用户下载新版并运行 `Install.cmd`，GitHub 用户也可以使用下面的命令。
+
+### GitHub 市场手动更新
+
+市场仍配置为 Git 来源时，可刷新并重新安装，然后完全退出并重启 Codex。
 
 ```powershell
 codex plugin marketplace upgrade cpa-quota
 codex plugin add cliproxy-quota@cpa-quota
 ```
 
-ZIP 安装可下载新版并再次运行 `Install.cmd`。外观和连接数据保存在版本目录之外，升级时继续使用。
-
-两种方式共享 `cpa-quota` 市场名。需要从 GitHub 安装切换为 ZIP 安装，或反向切换时，先运行 `codex plugin marketplace remove cpa-quota`，再按所选方式安装。
+如需改回 GitHub 市场来源，先运行 `codex plugin marketplace remove cpa-quota`，再执行快速安装中的 GitHub 命令。
 
 在 Codex Plugins 中卸载，或运行以下命令。
 
@@ -108,7 +125,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 ```
 
-生成的 ZIP 和 `SHA256SUMS.txt` 位于 `dist`，包含插件市场、可执行窗口、源码、启动器和安装器。ZIP 通过显式枚举文件保留 `.agents`、`.codex-plugin` 和 `.mcp.json`。
+生成的 ZIP、`SHA256SUMS.txt` 和 `update.json` 位于 `dist`。ZIP 包含插件市场、可执行窗口、源码、启动器和安装器，通过显式枚举文件保留 `.agents`、`.codex-plugin` 和 `.mcp.json`。`update.json` 包含版本、下载地址、SHA256 和更新说明，供插件检查新版。
 
 仓库保留已编译的 `QuotaPet.exe`，以便直接从 GitHub 安装。修改 C# 后需重新运行 `plugins/cliproxy-quota/src/pet/build.ps1` 并提交更新后的可执行文件。
 
@@ -127,6 +144,6 @@ install.ps1 / Install.cmd           Windows 安装入口
 .github/workflows/release.yml       测试、构建和 Release 发布
 ```
 
-GitHub Actions 会在 `main` 推送和 Pull Request 时测试并上传安装包构建产物。推送 `v版本号` 标签时，测试与打包通过后自动创建 GitHub Release，并附带 ZIP 和校验文件。标签必须与插件清单版本一致。
+GitHub Actions 会在 `main` 推送和 Pull Request 时测试并上传安装包构建产物。发布时修改 `.codex-plugin/plugin.json` 和启动页的版本，在 `CHANGELOG.md` 添加对应版本的更新说明，编译并提交窗口，然后推送 `v版本号` 标签。测试与打包通过后自动创建 GitHub Release，附带 ZIP、校验文件和 `update.json`，已安装 2.8.0 及以上的用户即可检查到新版本。标签必须与插件清单版本一致。
 
 CLIProxy 接口参考见 [管理 API](https://help.router-for.me/cn/management/apiv8)。

@@ -83,10 +83,10 @@ internal sealed class Backend : IDisposable
             }
             catch { pending.Remove(id); throw; }
         }
-        if (await Task.WhenAny(completion.Task, Task.Delay(180000)) != completion.Task)
+        if (await Task.WhenAny(completion.Task, Task.Delay(method == "install_update" ? 300000 : 180000)) != completion.Task)
         {
             lock (gate) { pending.Remove(id); }
-            throw new Exception("额度查询超时，请稍后刷新。");
+            throw new Exception("操作超时，请稍后重试。");
         }
         return await completion.Task;
     }
@@ -201,6 +201,11 @@ internal sealed class PetWindow : Window
     private readonly TextBlock focus = Ui.Text("读取当前模型…", 11, Ui.Muted);
     private readonly TextBlock status = Ui.Text("等待连接", 10, Ui.Muted);
     private readonly TextBlock error = Ui.Text("", 11, Ui.Warning);
+    private readonly TextBlock updateNotice = Ui.Text("", 10, Ui.Accent);
+    private readonly DispatcherTimer updateTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(6) };
+    private object updateInfo;
+    private bool checkingUpdates;
+    private bool installingUpdate;
     private readonly DispatcherTimer focusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
     private readonly DispatcherTimer appearanceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
@@ -296,6 +301,12 @@ internal sealed class PetWindow : Window
         footer.Children.Add(buttons);
         footer.Children.Add(status);
         body.Children.Add(footer);
+        updateNotice.Visibility = Visibility.Collapsed;
+        updateNotice.TextWrapping = TextWrapping.Wrap;
+        updateNotice.Cursor = Cursors.Hand;
+        updateNotice.Margin = new Thickness(0, 6, 0, 0);
+        updateNotice.MouseLeftButtonUp += async delegate { await Settings(true); };
+        body.Children.Add(updateNotice);
         Content = new Border { Background = Ui.Panel, BorderBrush = Ui.Edge, BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12), Padding = new Thickness(10), Child = body };
 
@@ -308,12 +319,14 @@ internal sealed class PetWindow : Window
         tray.DoubleClick += delegate { Dispatcher.BeginInvoke(new Action(ToggleVisible)); };
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, delegate { Dispatcher.BeginInvoke(new Action(ShowPanel)); }, null, -1, false);
         Loaded += async delegate { PositionRight(); UpdateDisplayScope(); UpdateOpacity(); appearanceTimer.Start(); if (ready != null) ready(); if (backend != null) { await LoadModels(); await Refresh(false); focusTimer.Start(); } };
+        Loaded += async delegate { if (backend != null) { await CheckUpdates(false); if (!closing) updateTimer.Start(); } };
+        updateTimer.Tick += async delegate { await CheckUpdates(false); };
         appearanceTimer.Tick += delegate { UpdateDisplayScope(); UpdateOpacity(); };
         MouseEnter += delegate { lastNear = DateTime.UtcNow; UpdateOpacity(); };
         SizeChanged += delegate { if (IsLoaded && !dragging && preferences.SnapEdges) SnapToEdge(false); };
         focusTimer.Tick += async delegate { await Sync(); };
         refreshTimer.Tick += async delegate { await Refresh(false); };
-        Closed += delegate { closing = true; Program.RecordRuntime(!closingWithCodex); focusTimer.Stop(); refreshTimer.Stop(); appearanceTimer.Stop(); showWait.Unregister(null); tray.Visible = false; tray.Dispose(); applicationIcon.Dispose(); if (backend != null) backend.Dispose(); };
+        Closed += delegate { closing = true; Program.RecordRuntime(!closingWithCodex); focusTimer.Stop(); refreshTimer.Stop(); appearanceTimer.Stop(); updateTimer.Stop(); showWait.Unregister(null); tray.Visible = false; tray.Dispose(); applicationIcon.Dispose(); if (backend != null) backend.Dispose(); };
     }
 
     internal void CloseWithCodex()
@@ -584,7 +597,26 @@ internal sealed class PetWindow : Window
             Margin = new Thickness(0, 0, 0, 5), Child = content };
     }
 
-    private async Task Settings()
+    private void ApplyUpdateInfo(object value)
+    {
+        updateInfo = value;
+        bool restart = Data.Get(value, "restartRequired") is bool && (bool)Data.Get(value, "restartRequired");
+        bool available = Data.Get(value, "available") is bool && (bool)Data.Get(value, "available");
+        updateNotice.Text = restart ? "已安装 " + Data.Text(value, "installedVersion") + " · 请重启 Codex"
+            : available ? "发现新版 " + Data.Text(value, "latestVersion") + " · 点击查看" : "";
+        updateNotice.Visibility = restart || available ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async Task CheckUpdates(bool force)
+    {
+        if (checkingUpdates || installingUpdate || closing) return;
+        checkingUpdates = true;
+        try { ApplyUpdateInfo(await backend.Call("check_updates", new { force })); }
+        catch (Exception exception) { ApplyUpdateInfo(new Dictionary<string, object> { { "error", exception.Message } }); }
+        finally { checkingUpdates = false; }
+    }
+
+    private async Task Settings(bool showUpdates = false)
     {
         try
         {
@@ -665,6 +697,63 @@ internal sealed class PetWindow : Window
             });
             body.Children.Add(save); body.Children.Add(message);
             tabs.Items.Add(Ui.Tab("连接", body));
+            var updates = new StackPanel { Margin = new Thickness(20) };
+            updates.Children.Add(Ui.Text("CPA Quota for Codex", 16));
+            var versions = Ui.Text("当前版本 " + Data.Text(config, "backendVersion"), 12);
+            versions.Margin = new Thickness(0, 12, 0, 8);
+            updates.Children.Add(versions);
+            var updateMessage = Ui.Text("启动时自动检查，每 24 小时最多检查一次。", 11, Ui.Muted);
+            updateMessage.TextWrapping = TextWrapping.Wrap;
+            updates.Children.Add(updateMessage);
+            var notes = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 140,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = Ui.Card, Foreground = Ui.Foreground,
+                BorderBrush = Ui.Edge, Padding = new Thickness(8), Margin = new Thickness(0, 12, 0, 12) };
+            updates.Children.Add(notes);
+            var checkUpdate = Ui.Button("检查更新", delegate { });
+            var installUpdate = Ui.Button("下载并安装更新", delegate { });
+            var releasePage = Ui.Button("GitHub 发布页", delegate {
+                Process.Start(new ProcessStartInfo("https://github.com/hangsecret/cpa-quota-for-codex/releases") { UseShellExecute = true });
+            });
+            Action renderUpdates = delegate {
+                var value = updateInfo;
+                versions.Text = "当前版本 " + Data.Text(config, "backendVersion") + "    最新版本 "
+                    + (String.IsNullOrEmpty(Data.Text(value, "latestVersion")) ? "尚未检查" : Data.Text(value, "latestVersion"));
+                notes.Text = Data.Text(value, "notes");
+                string checkedAt = Data.Text(value, "checkedAt");
+                DateTimeOffset checkedTime;
+                string time = DateTimeOffset.TryParse(checkedAt, out checkedTime) ? "上次检查 " + checkedTime.ToLocalTime().ToString("MM/dd HH:mm") : "启动时自动检查，每 24 小时最多检查一次。";
+                bool restart = Data.Get(value, "restartRequired") is bool && (bool)Data.Get(value, "restartRequired");
+                bool available = Data.Get(value, "available") is bool && (bool)Data.Get(value, "available");
+                string updateError = Data.Text(value, "error");
+                updateMessage.Text = restart ? "已安装 " + Data.Text(value, "installedVersion") + "，请完全退出并重启 Codex。"
+                    : !String.IsNullOrEmpty(updateError) ? updateError : available ? "发现新版本。" + time
+                    : !String.IsNullOrEmpty(Data.Text(value, "latestVersion")) ? "已是最新版本。" + time : time;
+                installUpdate.IsEnabled = available && !restart && String.IsNullOrEmpty(updateError) && !installingUpdate;
+            };
+            checkUpdate.Click += async delegate {
+                checkUpdate.IsEnabled = false; installUpdate.IsEnabled = false; updateMessage.Text = "正在检查更新…";
+                try { ApplyUpdateInfo(await backend.Call("check_updates", new { force = true })); renderUpdates(); }
+                catch (Exception exception) { updateMessage.Text = exception.Message; }
+                finally { checkUpdate.IsEnabled = true; }
+            };
+            installUpdate.Click += async delegate {
+                if (installingUpdate) return;
+                installingUpdate = true; checkUpdate.IsEnabled = false; installUpdate.IsEnabled = false;
+                updateMessage.Text = "正在下载、校验并安装，请稍候…";
+                try {
+                    ApplyUpdateInfo(await backend.Call("install_update", new { version = Data.Text(updateInfo, "latestVersion") }));
+                    renderUpdates();
+                }
+                catch (Exception exception) { updateMessage.Text = exception.Message; installUpdate.IsEnabled = true; }
+                finally { installingUpdate = false; checkUpdate.IsEnabled = true; }
+            };
+            updates.Children.Add(checkUpdate); updates.Children.Add(installUpdate); updates.Children.Add(releasePage);
+            var updateHint = Ui.Text("更新使用 GitHub Release 安装包和 SHA256 校验。更新后采用本地 Release 安装源，后续可在这里继续升级。连接密钥与外观设置保存在用户数据目录。", 11, Ui.Muted);
+            updateHint.TextWrapping = TextWrapping.Wrap; updateHint.Margin = new Thickness(0, 12, 0, 0);
+            updates.Children.Add(updateHint);
+            renderUpdates();
+            tabs.Items.Add(Ui.Tab("关于与更新", new ScrollViewer { Content = updates, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }));
+            if (showUpdates) tabs.SelectedIndex = 2;
             dialog.Content = tabs; PresentDialog(dialog);
         }
         catch (Exception exception) { Error(exception.Message); }
