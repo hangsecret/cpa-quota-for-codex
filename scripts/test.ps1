@@ -4,8 +4,16 @@ $taskPlugin = Join-Path $taskRoot 'plugins\cliproxy-quota'
 . (Join-Path $taskPlugin 'scripts\resolve-node.ps1')
 $taskNode = Resolve-QuotaNode
 $taskTests = @(Get-ChildItem -LiteralPath (Join-Path $taskPlugin 'src') -Filter '*.test.mjs' | ForEach-Object { $_.FullName })
-& $taskNode --disable-warning=ExperimentalWarning --test @taskTests
-if ($LASTEXITCODE -ne 0) { throw 'Node tests failed.' }
+$taskTestOutput = & $taskNode --disable-warning=ExperimentalWarning --test @taskTests 2>&1
+$taskTestExit = $LASTEXITCODE
+$taskTestOutput | ForEach-Object { Write-Host $_ }
+if ($taskTestExit -ne 0) {
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        $taskAnnotation = ($taskTestOutput | Out-String).Trim().Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+        Write-Host "::error::$taskAnnotation"
+    }
+    throw 'Node tests failed.'
+}
 $taskFramework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $taskNative = Join-Path $taskPlugin 'src\pet'
 $taskOutput = Join-Path $taskRoot 'work'
