@@ -2,13 +2,13 @@
 
 Codex 桌面版的「额度与模型」插件，附带紧凑的 Windows 悬浮窗。查看 CLIProxy 各账户的短周期、长周期剩余额度及重置时间，并跟随当前聊天模型优先显示匹配的账户。
 
-当前版本 **2.8.0**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
+当前版本 **2.9.0**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
 
 ## 快速安装
 
 ### 下载 ZIP 安装
 
-1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.8.0-windows.zip`。
+1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.9.0-windows.zip`。
 2. 解压到任意目录，双击 `Install.cmd`。安装器会寻找 Codex CLI 和可用的 Node，注册插件市场并安装插件。
 3. 完全退出并重新打开 Codex 桌面版。在悬浮窗「设置 → 连接」中填写自己的 CLIProxy 管理后台根地址、管理接口版本和管理密钥。
 
@@ -46,7 +46,10 @@ codex plugin add cliproxy-quota@cpa-quota
 - 「设置 → 外观 → 显示范围」支持「仅 Codex 窗口」和「所有应用窗口」，默认前者。切回 Codex 会恢复临时隐藏的窗口，手动隐藏后需主动打开。
 - 支持始终置顶、拖动、边缘吸附、深色/白色背景、不透明度和鼠标远离时淡化。
 - 顶部「−」隐藏，托盘图标双击可恢复。托盘菜单可显示、隐藏或退出。Codex 主进程退出后，窗口和额度查询后台一起关闭。
-- 「模型」中可以添加模型并设置显示名称，以及启停模型下拉菜单项。此功能要求 Codex 已配置 `model_catalog_json`，保存后重启 Codex 生效，每次修改前生成 `.cliproxy.bak` 备份。
+- 「模型」打开后自动拉取当前中转站的公共模型，也可点击「拉取模型」刷新。已配置与待添加的模型一起显示，可搜索并勾选添加、启用或取消显示。手动填写入口位于底部折叠项。
+- 公共列表中同时存在 `account/model` 与 `model` 时，仅显示公共 ID `model`。只有带前缀 ID 的模型保留有效路由。已有菜单条目继续保留，拉取只读取列表，勾选后才保存菜单修改。
+- 拉取复用 Codex 当前 `model_provider` 的 `base_url` 和 `env_key`，请求其 `/models` 接口。也支持供应商的 `experimental_bearer_token`，以及明确启用 `requires_openai_auth` 时的本地 API Key。管理密钥用于配额接口，模型列表请求使用模型调用凭据。
+- 模型菜单管理要求 Codex 已配置 `model_catalog_json`，保存后重启 Codex 生效，每次修改前生成 `.cliproxy.bak` 备份。
 - 查询失败时保留旧数据并停止自动查询，手动刷新成功后恢复。
 
 ## 配额支持与兼容性
@@ -68,6 +71,7 @@ codex plugin add cliproxy-quota@cpa-quota
 | 文件 | 内容 |
 | --- | --- |
 | `settings.json` | 后台地址、接口版本和 Windows 当前用户 DPAPI 加密的管理密钥 |
+| `model-api-key.json` | 当前供应商环境变量中模型调用凭据的 DPAPI 加密缓存，供独立悬浮窗读取公共模型列表，绑定接口地址和变量名 |
 | `desktop-preferences.json` | 主题、透明度、显示范围、置顶和自动启动偏好 |
 | `desktop-startup-session.json` | 本次 Codex 运行的启动标记 |
 | `desktop-runtime.json` | 窗口及所属 Codex 进程信息 |

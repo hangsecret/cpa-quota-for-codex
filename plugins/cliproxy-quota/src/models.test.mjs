@@ -4,7 +4,88 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { listModels, updateModel, activeModel } from './models.mjs';
+import { listModels, updateModel, activeModel, publicModels, fetchModels, cacheModelCredentials } from './models.mjs';
+
+test('public model list merges account aliases only when a usable shared ID exists', () => {
+  const result = publicModels([
+    { id: 'zane/gpt-6.1-sol' }, { id: 'secret/gpt-6.1-sol' }, { id: 'gpt-6.1-sol', display_name: 'GPT' },
+    { id: 'gpt-6.1-sol' }, { id: 'devin/claude-opus-5-5' }, { id: 'org/model' }, { id: 'account/org/model' },
+    { id: 'only-a/private' }, { id: 'only-b/private' }, { id: 'codex-auto-review' },
+    { id: 'account/codex-auto-review' }, null, { id: 'invalid\nmodel' }, { id: '' }, {},
+  ]);
+  assert.deepEqual(result.map(row => row.id), ['devin/claude-opus-5-5', 'gpt-6.1-sol', 'only-a/private', 'only-b/private', 'org/model']);
+  assert.equal(result.find(row => row.id === 'gpt-6.1-sol').name, 'GPT');
+  assert.throws(() => publicModels({ models: [] }), /模型列表/);
+  assert.deepEqual(publicModels([]), []);
+});
+
+test('model fetching uses current provider API credentials and leaves the menu unchanged', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-fetch-models-'));
+  const previousHome = process.env.CLIPROXY_CODEX_HOME;
+  const previousKey = process.env.QUOTA_TEST_MODEL_KEY;
+  process.env.CLIPROXY_CODEX_HOME = directory;
+  process.env.QUOTA_TEST_MODEL_KEY = 'test-model-key';
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.CLIPROXY_CODEX_HOME; else process.env.CLIPROXY_CODEX_HOME = previousHome;
+    if (previousKey === undefined) delete process.env.QUOTA_TEST_MODEL_KEY; else process.env.QUOTA_TEST_MODEL_KEY = previousKey;
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const configPath = path.join(directory, 'config.toml');
+  const original = 'model_provider = "relay"\n[model_providers.other]\nbase_url = "https://wrong.example/v1"\n[model_providers.relay]\nbase_url = "https://relay.example/v1/"\nenv_key = "QUOTA_TEST_MODEL_KEY"\n';
+  fs.writeFileSync(configPath, original);
+  const result = await fetchModels(async (url, options) => {
+    assert.equal(url, 'https://relay.example/v1/models');
+    assert.equal(options.headers.Authorization, 'Bearer test-model-key');
+    assert.equal(options.redirect, 'error');
+    return Response.json({ data: [{ id: 'gpt' }, { id: 'account/gpt' }] });
+  });
+  assert.deepEqual(result.models.map(row => row.id), ['gpt']);
+  assert.equal(fs.readFileSync(configPath, 'utf8'), original);
+  assert.deepEqual(fs.readdirSync(directory), ['config.toml']);
+  assert(!JSON.stringify(result).includes('test-model-key'));
+  fs.writeFileSync(configPath, original.replace('[model_providers.relay]', '[model_providers."relay"]'));
+  assert.equal((await fetchModels(async () => Response.json({ data: ['gpt'] }))).models.length, 1);
+  await assert.rejects(fetchModels(async () => { throw new Error('test-model-key'); }), /无法连接模型接口/);
+  await assert.rejects(fetchModels(async () => new Response('', { status: 401 })), /模型接口认证失败/);
+  await assert.rejects(fetchModels(async () => Response.json({ models: [] })), /模型列表/);
+  await assert.rejects(fetchModels(async () => new Response('<html>')), /有效 JSON/);
+  await assert.rejects(fetchModels(async () => new Response('', { status: 500 })), /HTTP 500/);
+  if (process.platform === 'win32') {
+    cacheModelCredentials(directory);
+    const saved = fs.readFileSync(path.join(directory, 'model-api-key.json'), 'utf8');
+    assert(!saved.includes('test-model-key'));
+    delete process.env.QUOTA_TEST_MODEL_KEY;
+    await fetchModels(async (url, options) => { assert.equal(options.headers.Authorization, 'Bearer test-model-key'); return Response.json({ data: [] }); }, directory);
+    fs.writeFileSync(configPath, original.replace('https://relay.example/v1/', 'https://other.example/v1/'));
+    await assert.rejects(fetchModels(async () => { throw new Error('Should not fetch'); }, directory), /QUOTA_TEST_MODEL_KEY/);
+    fs.writeFileSync(configPath, original);
+  }
+  delete process.env.QUOTA_TEST_MODEL_KEY;
+  await assert.rejects(fetchModels(async () => { throw new Error('Should not fetch'); }, path.join(directory, 'missing-cache')), /QUOTA_TEST_MODEL_KEY/);
+});
+
+test('public model requests do not borrow unrelated auth keys and reject credential-bearing URLs', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-model-auth-'));
+  const previous = process.env.CLIPROXY_CODEX_HOME;
+  process.env.CLIPROXY_CODEX_HOME = directory;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CLIPROXY_CODEX_HOME; else process.env.CLIPROXY_CODEX_HOME = previous;
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const configPath = path.join(directory, 'config.toml');
+  fs.writeFileSync(path.join(directory, 'auth.json'), '{"OPENAI_API_KEY":"stored-test-key"}');
+  const config = 'model_provider = "relay"\n[model_providers.relay]\nbase_url = "http://127.0.0.1:8317/v1"\n';
+  fs.writeFileSync(configPath, config);
+  await fetchModels(async (url, options) => { assert.deepEqual(options.headers, {}); return Response.json({ data: [] }); });
+  fs.appendFileSync(configPath, 'requires_openai_auth = true\n');
+  await fetchModels(async (url, options) => { assert.equal(options.headers.Authorization, 'Bearer stored-test-key'); return Response.json({ data: [] }); });
+  fs.writeFileSync(configPath, config + 'experimental_bearer_token = "inline-test-key"\n');
+  await fetchModels(async (url, options) => { assert.equal(options.headers.Authorization, 'Bearer inline-test-key'); return Response.json({ data: [] }); });
+  for (const base of ['https://user:password@example.com/v1', 'https://example.com/v1?key=value', 'http://example.com/v1']) {
+    fs.writeFileSync(configPath, config.replace('http://127.0.0.1:8317/v1', base));
+    await assert.rejects(fetchModels(async () => { throw new Error('Should not fetch'); }), /base_url 无效/);
+  }
+});
 
 test('model management preserves existing capabilities and protects the default', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-models-'));

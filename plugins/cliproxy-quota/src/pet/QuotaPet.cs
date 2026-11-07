@@ -763,45 +763,86 @@ internal sealed class PetWindow : Window
     {
         try
         {
-            var dialog = Ui.Dialog(this, "模型管理", 550);
+            var dialog = Ui.Dialog(this, "模型管理", 590);
             var body = new DockPanel { Margin = new Thickness(16) };
+            var header = new StackPanel();
+            var toolbar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var fetch = Ui.Button("拉取模型", delegate { });
+            DockPanel.SetDock(fetch, Dock.Right); toolbar.Children.Add(fetch);
+            toolbar.Children.Add(Ui.Text("中转站模型", 13));
+            header.Children.Add(toolbar);
             var search = Ui.Input();
             search.ToolTip = "搜索模型名称或 ID";
-            DockPanel.SetDock(search, Dock.Top);
-            body.Children.Add(search);
+            header.Children.Add(search);
+            DockPanel.SetDock(header, Dock.Top);
+            body.Children.Add(header);
             var bottom = new StackPanel();
-            bottom.Children.Add(Ui.Text("添加模型 ID", 11, Ui.Muted));
-            var id = Ui.Input(); bottom.Children.Add(id);
-            bottom.Children.Add(Ui.Text("显示名称（选填）", 11, Ui.Muted));
-            var name = Ui.Input(); bottom.Children.Add(name);
-            var message = Ui.Text("菜单修改在重新打开 Codex 后生效", 11, Ui.Muted); message.TextWrapping = TextWrapping.Wrap;
+            var manual = new StackPanel { Margin = new Thickness(0, 8, 0, 8) };
+            manual.Children.Add(Ui.Text("模型 ID", 11, Ui.Muted));
+            var id = Ui.Input(); manual.Children.Add(id);
+            manual.Children.Add(Ui.Text("显示名称（选填）", 11, Ui.Muted));
+            var name = Ui.Input(); manual.Children.Add(name);
+            var message = Ui.Text("勾选添加或启用模型，取消勾选隐藏；重启 Codex 生效。", 11, Ui.Muted); message.TextWrapping = TextWrapping.Wrap;
             var list = new StackPanel();
+            var offered = new List<object>();
             object modelState = null;
-            Action<object> render = state => {
+            Action<object> render = null;
+            render = state => {
                 modelState = state;
                 list.Children.Clear();
-                foreach (var row in Data.Rows(Data.Get(state, "models")).Where(row =>
+                var configured = Data.Rows(Data.Get(state, "models")).ToList();
+                var known = new HashSet<string>(configured.Select(row => Data.Text(row, "id")), StringComparer.Ordinal);
+                var rows = configured.Concat(offered.Where(row => !known.Contains(Data.Text(row, "id"))));
+                foreach (var row in rows.Where(row =>
                     (Data.Text(row, "id") + " " + Data.Text(row, "name")).IndexOf(search.Text, StringComparison.OrdinalIgnoreCase) >= 0))
                 {
                     string modelId = Data.Text(row, "id");
-                    var toggle = new CheckBox { Content = Data.Text(row, "name"), ToolTip = modelId, IsChecked = Object.Equals(Data.Get(row, "enabled"), true),
+                    string modelName = Data.Text(row, "name");
+                    bool exists = known.Contains(modelId);
+                    var label = Ui.Text(modelName + (exists ? "" : " · 待添加"), 11);
+                    label.TextWrapping = TextWrapping.Wrap;
+                    var toggle = new CheckBox { Content = label, ToolTip = modelId, IsChecked = Object.Equals(Data.Get(row, "enabled"), true),
                         IsEnabled = !Object.Equals(Data.Get(row, "current"), true), Foreground = Ui.Foreground, Margin = new Thickness(0, 6, 0, 6), MaxWidth = 320 };
                     toggle.Click += async delegate {
-                        toggle.IsEnabled = false;
-                        try { await backend.Call("update_model", new { action = toggle.IsChecked == true ? "enable" : "disable", id = modelId }); await LoadModels(); }
+                        list.IsEnabled = false;
+                        try {
+                            string action = toggle.IsChecked == true ? (exists ? "enable" : "add") : "disable";
+                            render(await backend.Call("update_model", new { action, id = modelId, name = modelName }));
+                            message.Text = "已保存模型菜单，请重启 Codex 生效。";
+                            await LoadModels();
+                        }
                         catch (Exception exception) { toggle.IsChecked = !toggle.IsChecked; message.Text = exception.Message; }
-                        finally { toggle.IsEnabled = true; }
+                        finally { list.IsEnabled = true; }
                     };
                     list.Children.Add(toggle);
                 }
             };
             search.TextChanged += delegate { if (modelState != null) render(modelState); };
-            bottom.Children.Add(Ui.Button("添加到菜单", async delegate {
+            manual.Children.Add(Ui.Button("添加到菜单", async delegate {
                 try { render(await backend.Call("update_model", new { action = "add", id = id.Text.Trim(), name = name.Text.Trim() })); id.Clear(); name.Clear(); await LoadModels(); }
                 catch (Exception exception) { message.Text = exception.Message; }
             }));
+            bottom.Children.Add(new Expander { Header = "手动添加模型", Content = manual, Foreground = Ui.Foreground, Margin = new Thickness(0, 10, 0, 8) });
+            var fetched = Ui.Text("", 10, Ui.Muted); fetched.TextWrapping = TextWrapping.Wrap;
+            bottom.Children.Add(fetched);
             bottom.Children.Add(message); DockPanel.SetDock(bottom, Dock.Bottom); body.Children.Add(bottom);
             body.Children.Add(new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+            bool pulling = false;
+            Func<Task> pull = async delegate {
+                if (pulling) return;
+                pulling = true; fetch.IsEnabled = false; fetched.Text = "正在从中转站拉取公共模型…";
+                try {
+                    var remote = await backend.Call("fetch_models");
+                    offered = Data.Rows(Data.Get(remote, "models")).ToList();
+                    render(modelState);
+                    fetched.Text = "已拉取 " + offered.Count + " 个模型，已合并可匹配的账号前缀重复项。";
+                    fetched.ToolTip = Data.Text(remote, "source");
+                }
+                catch (Exception exception) { fetched.Text = "拉取失败。" + exception.Message; }
+                finally { pulling = false; fetch.IsEnabled = true; }
+            };
+            fetch.Click += async delegate { await pull(); };
+            dialog.Loaded += async delegate { await pull(); };
             render(await backend.Call("list_models")); dialog.Content = body; PresentDialog(dialog);
         }
         catch (Exception exception) { Error(exception.Message); }

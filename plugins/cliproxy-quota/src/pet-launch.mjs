@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { desktopSession } from './desktop.mjs';
+import { cacheModelCredentials } from './models.mjs';
 
 const desktopData = () => path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CodexCLIProxyQuota');
 
@@ -26,6 +27,7 @@ function readJson(file) {
 
 export async function openDesktopPanel({ background = false } = {}) {
   if (process.platform !== 'win32') throw new Error('桌面悬浮面板当前支持 Windows。');
+  cacheModelCredentials();
   const executable = fileURLToPath(new URL('pet/QuotaPet.exe', import.meta.url));
   if (!fs.existsSync(executable)) throw new Error('桌面面板尚未编译，请运行插件 pet 目录中的 build.ps1。');
   const script = fileURLToPath(new URL('pet-backend.mjs', import.meta.url));

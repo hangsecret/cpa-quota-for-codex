@@ -31,6 +31,7 @@ test('plugin has a global desktop launcher and no thread panel entrypoint', asyn
     assert.equal(initialized.serverInfo.icons[0].mimeType, 'image/png');
     assert(!tools.some(t => t.name === 'open_quota_file'));
     assert.deepEqual(tools.find(t => t.name === 'update_model')._meta.ui.visibility, ['app']);
+    assert.deepEqual(tools.find(t => t.name === 'fetch_models')._meta.ui.visibility, ['app']);
     const { contents } = await call('resources/read', { uri: entry._meta.ui.resourceUri });
     assert.equal(contents[0].mimeType, 'text/html;profile=mcp-app');
     assert(contents[0].text.includes('ui/initialize'));

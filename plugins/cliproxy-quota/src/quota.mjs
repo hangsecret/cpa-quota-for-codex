@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 export const dataDir = process.env.CLIPROXY_QUOTA_DATA || path.join(process.env.LOCALAPPDATA || os.homedir(), 'CodexCLIProxyQuota');
 const settingsFile = path.join(dataDir, 'settings.json');
 
-function protect(value, decrypt = false) {
+export function protect(value, decrypt = false) {
   if (process.platform !== 'win32') throw new Error('此版本的密钥存储需要 Windows DPAPI。');
   const script = decrypt
     ? '$v=[Console]::In.ReadToEnd(); $s=ConvertTo-SecureString $v; $p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s); try {[Console]::Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($p))} finally {[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p)}'

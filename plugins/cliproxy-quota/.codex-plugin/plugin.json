@@ -1,5 +1,5 @@
 {
-  "version": "2.8.0",
+  "version": "2.9.0",
   "name": "cliproxy-quota",
   "description": "桌面额度悬浮窗，支持模型跟随、配额查询和模型管理",
   "interface": {

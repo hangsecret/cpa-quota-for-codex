@@ -23,7 +23,7 @@ async function dispatch(method, args = {}) {
     catch (error) { quotaError = error.message; }
     return view(args);
   }
-  if (['get_console_settings', 'save_console_settings', 'list_models', 'update_model'].includes(method)) return execute(method, args);
+  if (['get_console_settings', 'save_console_settings', 'list_models', 'fetch_models', 'update_model'].includes(method)) return execute(method, args);
   throw new Error('未知桌面面板操作。');
 }
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });

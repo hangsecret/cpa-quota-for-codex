@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { settings, saveSettings, queryQuota } from './quota.mjs';
-import { listModels, updateModel, activeModel } from './models.mjs';
+import { listModels, updateModel, activeModel, fetchModels } from './models.mjs';
 import { openDesktopPanel, autoStartDesktopPanel } from './pet-launch.mjs';
 import { currentVersion } from './version.mjs';
 
@@ -18,6 +18,7 @@ export const tools = [
   { name: 'get_console_settings', description: '读取插件连接设置，不返回密钥。', inputSchema: emptySchema, annotations: readOnly, _meta: appOnly },
   { name: 'save_console_settings', description: '保存用户输入的 CLIProxy 管理连接，用 Windows DPAPI 加密密钥。', inputSchema: { type: 'object', properties: { baseUrl: { type: 'string' }, apiVersion: { enum: ['v8', 'v0'] }, managementKey: { type: 'string' } }, required: ['baseUrl', 'apiVersion'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, _meta: appOnly },
   { name: 'list_models', description: '读取 Codex 模型菜单的显示状态。', inputSchema: emptySchema, annotations: readOnly },
+  { name: 'fetch_models', description: '从 Codex 当前中转站拉取公共模型，合并账号前缀重复项。', inputSchema: emptySchema, annotations: { ...readOnly, openWorldHint: true }, _meta: appOnly },
   { name: 'get_model_focus', description: '自动定位桌面最近激活的聊天视图并读取保存的模型，也可显式查询指定聊天。', inputSchema: { type: 'object', properties: { threadId: { type: 'string' } }, additionalProperties: false }, annotations: readOnly, _meta: appOnly },
   { name: 'update_model', description: '按用户操作添加模型，或启用、取消模型在 Codex 下拉菜单中的显示。', inputSchema: { type: 'object', properties: { action: { enum: ['add', 'enable', 'disable'] }, id: { type: 'string' }, name: { type: 'string' } }, required: ['action', 'id'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, _meta: appOnly }
 ];
@@ -32,6 +33,7 @@ export async function execute(name, args = {}) {
   if (name === 'get_console_settings') return publicSettings();
   if (name === 'save_console_settings') { saveSettings(args); return publicSettings(); }
   if (name === 'list_models') return listModels();
+  if (name === 'fetch_models') return fetchModels();
   if (name === 'get_model_focus') return activeModel(args);
   if (name === 'update_model') return updateModel(args);
   throw new Error('未知工具。');
