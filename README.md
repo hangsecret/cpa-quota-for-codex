@@ -2,13 +2,13 @@
 
 Codex 桌面版的「额度与模型」插件，附带紧凑的 Windows 悬浮窗。查看 CLIProxy 各账户的短周期、长周期剩余额度及重置时间，并跟随当前聊天模型优先显示匹配的账户。
 
-当前版本 **2.9.0**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
+当前版本 **2.9.1**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
 
 ## 快速安装
 
 ### 下载 ZIP 安装
 
-1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.9.0-windows.zip`。
+1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.9.1-windows.zip`。
 2. 解压到任意目录，双击 `Install.cmd`。安装器会寻找 Codex CLI 和可用的 Node，注册插件市场并安装插件。
 3. 完全退出并重新打开 Codex 桌面版。在悬浮窗「设置 → 连接」中填写自己的 CLIProxy 管理后台根地址、管理接口版本和管理密钥。
 
@@ -49,6 +49,7 @@ codex plugin add cliproxy-quota@cpa-quota
 - 「模型」打开后自动拉取当前中转站的公共模型，也可点击「拉取模型」刷新。已配置与待添加的模型一起显示，可搜索并勾选添加、启用或取消显示。手动填写入口位于底部折叠项。
 - 公共列表中同时存在 `account/model` 与 `model` 时，仅显示公共 ID `model`。只有带前缀 ID 的模型保留有效路由。已有菜单条目继续保留，拉取只读取列表，勾选后才保存菜单修改。
 - 拉取复用 Codex 当前 `model_provider` 的 `base_url` 和 `env_key`，请求其 `/models` 接口。也支持供应商的 `experimental_bearer_token`，以及明确启用 `requires_openai_auth` 时的本地 API Key。管理密钥用于配额接口，模型列表请求使用模型调用凭据。
+- 指定 `env_key` 时，按进程环境变量、Codex 用户目录的 `.env`、绑定接口的 Windows 加密缓存顺序读取对应密钥。使用 `CODEX_HOME` 时读取该目录中的 `.env`。首次安装即可读取 `.env`，修改文件后可直接点击「拉取模型」重试，原文件继续保留。
 - 模型菜单管理要求 Codex 已配置 `model_catalog_json`，保存后重启 Codex 生效，每次修改前生成 `.cliproxy.bak` 备份。
 - 查询失败时保留旧数据并停止自动查询，手动刷新成功后恢复。
 

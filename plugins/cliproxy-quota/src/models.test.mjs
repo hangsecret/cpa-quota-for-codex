@@ -87,6 +87,54 @@ test('public model requests do not borrow unrelated auth keys and reject credent
   }
 });
 
+test('first install reads the configured key from Codex .env without a process variable or cache', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-env-file-'));
+  const previousHome = process.env.CLIPROXY_CODEX_HOME;
+  const previousKey = process.env.QUOTA_TEST_ENV_FILE_KEY;
+  process.env.CLIPROXY_CODEX_HOME = directory;
+  delete process.env.QUOTA_TEST_ENV_FILE_KEY;
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.CLIPROXY_CODEX_HOME; else process.env.CLIPROXY_CODEX_HOME = previousHome;
+    if (previousKey === undefined) delete process.env.QUOTA_TEST_ENV_FILE_KEY; else process.env.QUOTA_TEST_ENV_FILE_KEY = previousKey;
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const config = 'model_provider = "relay"\n[model_providers.relay]\nbase_url = "https://relay.example/v1"\nenv_key = "QUOTA_TEST_ENV_FILE_KEY"\n';
+  const configPath = path.join(directory, 'config.toml');
+  const envPath = path.join(directory, '.env');
+  fs.writeFileSync(configPath, config);
+  const originalEnv = '# user credentials\r\nUNRELATED_VARIABLE="ignored"\r\nexport QUOTA_TEST_ENV_FILE_KEY = "first#test=value" # comment\r\n';
+  fs.writeFileSync(envPath, originalEnv);
+  const data = path.join(directory, 'plugin-data');
+  assert(!fs.existsSync(data));
+  let expectedKey = 'first#test=value';
+  const fetcher = async (url, options) => {
+    assert.equal(url, 'https://relay.example/v1/models');
+    assert.equal(options.headers.Authorization, `Bearer ${expectedKey}`);
+    return Response.json({ data: [{ id: 'gpt-test' }] });
+  };
+  const first = await fetchModels(fetcher, data);
+  assert.deepEqual(first.models.map(row => row.id), ['gpt-test']);
+  assert(!fs.existsSync(data));
+  assert.equal(fs.readFileSync(envPath, 'utf8'), originalEnv);
+  assert.equal(fs.readFileSync(configPath, 'utf8'), config);
+  assert.equal(process.env.UNRELATED_VARIABLE, undefined);
+  if (process.platform === 'win32') {
+    cacheModelCredentials(data);
+    const saved = fs.readFileSync(path.join(data, 'model-api-key.json'), 'utf8');
+    assert(!saved.includes(expectedKey));
+    assert.equal(JSON.parse(saved).envKey, 'QUOTA_TEST_ENV_FILE_KEY');
+  }
+  fs.writeFileSync(envPath, "QUOTA_TEST_ENV_FILE_KEY='updated-test-value'\n");
+  expectedKey = 'updated-test-value';
+  await fetchModels(fetcher, data);
+  process.env.QUOTA_TEST_ENV_FILE_KEY = 'process-override';
+  expectedKey = 'process-override';
+  await fetchModels(fetcher, data);
+  delete process.env.QUOTA_TEST_ENV_FILE_KEY;
+  fs.writeFileSync(envPath, 'UNRELATED_VARIABLE=other\n');
+  await assert.rejects(fetchModels(fetcher, path.join(directory, 'empty-data')), /QUOTA_TEST_ENV_FILE_KEY/);
+});
+
 test('model management preserves existing capabilities and protects the default', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-models-'));
   const originalHome = process.env.CLIPROXY_CODEX_HOME;

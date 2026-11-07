@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { desktopThread } from './desktop.mjs';
 import { dataDir, protect } from './quota.mjs';
 import { randomUUID } from 'node:crypto';
+import { parseEnv } from 'node:util';
 
 const codexDir = () => process.env.CLIPROXY_CODEX_HOME || process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 function rootString(text, name) {
@@ -62,11 +63,18 @@ function modelConnection(directory) {
   let key = envKey ? process.env[envKey] : rootString(provider, 'experimental_bearer_token');
   if (envKey && !key) {
     try {
+      key = parseEnv(fs.readFileSync(path.join(home, '.env'), 'utf8'))[envKey];
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error('无法读取 Codex 用户目录下的 .env 文件，请检查文件权限和格式。');
+    }
+  }
+  if (envKey && !key) {
+    try {
       const saved = JSON.parse(fs.readFileSync(path.join(directory, 'model-api-key.json'), 'utf8'));
       if (saved.url === url.href && saved.envKey === envKey) key = protect(saved.encryptedKey, true);
     } catch { /* A missing or obsolete cache requires the configured environment variable. */ }
   }
-  if (envKey && !key) throw new Error(`请配置模型 API Key 环境变量 ${envKey}，然后重启 Codex。`);
+  if (envKey && !key) throw new Error(`未读取到模型调用密钥 ${envKey}。请检查 Codex 用户目录下的 .env 或进程环境变量，然后重试拉取。`);
   if (!envKey && !key && /^\s*requires_openai_auth\s*=\s*true\b/m.test(provider)) {
     try { key = JSON.parse(fs.readFileSync(path.join(home, 'auth.json'), 'utf8')).OPENAI_API_KEY; } catch { /* Public model endpoints may allow unauthenticated access. */ }
   }
@@ -77,7 +85,7 @@ function modelConnection(directory) {
 export function cacheModelCredentials(directory = dataDir) {
   try {
     const { url, envKey, key } = modelConnection(directory);
-    if (!envKey || !process.env[envKey]) return;
+    if (!envKey || !key) return;
     const saved = { url: url.href, envKey, encryptedKey: protect(key) };
     fs.mkdirSync(directory, { recursive: true });
     const file = path.join(directory, 'model-api-key.json');
