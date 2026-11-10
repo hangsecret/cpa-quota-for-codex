@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { settings, saveSettings, queryQuota } from './quota.mjs';
+import { settings, saveSettings, queryQuota, testManagementConnection } from './quota.mjs';
 import { listModels, updateModel, activeModel, fetchModels } from './models.mjs';
 import { openDesktopPanel, autoStartDesktopPanel } from './pet-launch.mjs';
 import { currentVersion } from './version.mjs';
@@ -16,6 +16,7 @@ export const tools = [
   { name: 'open_quota_console', title: '额度与模型', icons, description: '从 Plugins 的“打开插件”进入桌面悬浮窗启动器。进入后自动启动或显示已有桌面窗口。', inputSchema: emptySchema, annotations: readOnly, _meta: { ui: { resourceUri }, 'openai/outputTemplate': resourceUri, 'openai/widgetAccessible': true, 'openai/ui': { entrypoints: [{ type: 'global' }] } } },
   { name: 'get_quota', description: '查询 CLIProxy 账户剩余配额和重置时间。', inputSchema: { type: 'object', properties: { refresh: { type: 'boolean' } }, additionalProperties: false }, annotations: { ...readOnly, openWorldHint: true } },
   { name: 'get_console_settings', description: '读取插件连接设置，不返回密钥。', inputSchema: emptySchema, annotations: readOnly, _meta: appOnly },
+  { name: 'test_management_connection', description: '测试已保存管理连接并返回脱敏网络诊断结果。', inputSchema: emptySchema, annotations: { ...readOnly, openWorldHint: true }, _meta: appOnly },
   { name: 'save_console_settings', description: '保存用户输入的 CLIProxy 管理连接，用 Windows DPAPI 加密密钥。', inputSchema: { type: 'object', properties: { baseUrl: { type: 'string' }, apiVersion: { enum: ['v8', 'v0'] }, managementKey: { type: 'string' } }, required: ['baseUrl', 'apiVersion'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, _meta: appOnly },
   { name: 'list_models', description: '读取 Codex 模型菜单的显示状态。', inputSchema: emptySchema, annotations: readOnly },
   { name: 'fetch_models', description: '从 Codex 当前中转站拉取公共模型，合并账号前缀重复项。', inputSchema: emptySchema, annotations: { ...readOnly, openWorldHint: true }, _meta: appOnly },
@@ -31,6 +32,7 @@ export async function execute(name, args = {}) {
   if (name === 'open_quota_console') return { launcher: true };
   if (name === 'get_quota') return queryQuota(args.refresh === true);
   if (name === 'get_console_settings') return publicSettings();
+  if (name === 'test_management_connection') return testManagementConnection();
   if (name === 'save_console_settings') { saveSettings(args); return publicSettings(); }
   if (name === 'list_models') return listModels();
   if (name === 'fetch_models') return fetchModels();

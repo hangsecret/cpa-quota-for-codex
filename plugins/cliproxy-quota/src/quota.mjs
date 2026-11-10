@@ -41,16 +41,92 @@ export function saveSettings(input) {
 }
 
 class ApiError extends Error {
-  constructor(status) { super(status === 401 || status === 403 ? '管理认证失败，请检查管理密钥。' : `管理接口返回 HTTP ${status}`); this.status = status; }
+  constructor(status, reason) {
+    super(reason || (status === 401 ? '管理认证失败，请检查管理密钥（HTTP 401）。'
+      : status === 403 ? '管理接口拒绝访问，请检查远程管理与 IP 访问限制（HTTP 403）。' : `管理接口返回 HTTP ${status}`));
+    this.status = status;
+  }
+}
+
+function networkError(error) {
+  const reasons = {
+    ENOTFOUND: 'DNS 无法解析管理站点域名', EAI_AGAIN: 'DNS 查询暂时失败',
+    ECONNREFUSED: '管理站点拒绝连接，请检查端口与服务状态',
+    ECONNRESET: '管理连接被重置，请检查网络、代理或防火墙',
+    UND_ERR_SOCKET: '管理连接被提前关闭，请检查网络、代理或防火墙',
+    ETIMEDOUT: '连接管理接口超时', UND_ERR_CONNECT_TIMEOUT: '连接管理接口超时',
+    UND_ERR_HEADERS_TIMEOUT: '等待管理接口响应超时', UND_ERR_BODY_TIMEOUT: '读取管理接口响应超时',
+    CERT_HAS_EXPIRED: '管理站点的 HTTPS 证书已过期',
+    ERR_TLS_CERT_ALTNAME_INVALID: '管理站点的 HTTPS 证书与域名不匹配',
+    DEPTH_ZERO_SELF_SIGNED_CERT: '管理站点使用了未受信任的自签名证书',
+    SELF_SIGNED_CERT_IN_CHAIN: '管理站点的证书链包含未受信任的自签名证书',
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: '无法验证管理站点的 HTTPS 证书链',
+    UNABLE_TO_GET_ISSUER_CERT_LOCALLY: '无法找到管理站点证书的受信任签发机构',
+    ERR_SSL_WRONG_VERSION_NUMBER: '管理站点 HTTPS 握手失败，请检查代理与端口配置',
+  };
+  const candidates = [error, error?.cause, ...(error?.cause?.errors || [])];
+  const matched = candidates.find(item => reasons[item?.code]);
+  let code = matched?.code;
+  let message = reasons[code];
+  if (!message && ['TimeoutError', 'AbortError'].includes(error?.name)) {
+    code = 'TIMEOUT'; message = '管理接口请求超过 20 秒，请检查网络或服务响应';
+  }
+  if (!message && candidates.some(item => item?.message === 'unexpected redirect')) {
+    code = 'REDIRECT'; message = '管理接口发生重定向，请保存最终 HTTPS 管理站点地址';
+  }
+  const result = new Error(message ? `${message}（${code}）。` : '无法连接管理接口，请检查网络、代理及 HTTPS 证书。');
+  result.code = code || 'NETWORK_ERROR';
+  return result;
 }
 
 export async function request(baseUrl, key, route, body, fetcher = fetch) {
   let response;
   try {
     response = await fetcher(baseUrl + route, { method: body ? 'POST' : 'GET', redirect: 'error', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
-  } catch { throw new Error('无法连接管理接口，或请求超时。'); }
-  if (!response.ok) throw new ApiError(response.status);
-  try { return await response.json(); } catch { throw new Error('管理接口未返回 JSON，请检查地址和 API 版本。'); }
+  } catch (error) { throw networkError(error); }
+  if (!response.ok) {
+    let reason;
+    if (response.status === 403) {
+      try {
+        const payload = await response.json();
+        if (payload.error === 'remote management disabled') reason = 'CPA 已限制远程管理访问，请由管理员检查 management.allow-remote（HTTP 403）。';
+        if (typeof payload.error === 'string' && payload.error.startsWith('IP banned due to too many failed attempts.')) reason = '当前 IP 因连续管理认证失败被临时封禁，请稍后重试（HTTP 403）。';
+      } catch { /* An HTML gateway rejection still carries the HTTP status. */ }
+    }
+    throw new ApiError(response.status, reason);
+  }
+  try { return await response.json(); }
+  catch (error) {
+    if (error instanceof SyntaxError) throw new Error('管理接口未返回 JSON，请检查地址和 API 版本。');
+    throw networkError(error);
+  }
+}
+
+function managementKey(config) {
+  const key = process.env.CLIPROXY_MANAGEMENT_KEY || (config.encryptedKey ? protect(config.encryptedKey, true) : '');
+  if (!key) throw new Error('请先打开额度面板，在设置中填写 CLIProxy 管理密钥。');
+  return key;
+}
+
+export async function testManagementConnection(config = settings(), key, fetcher = fetch) {
+  const started = Date.now();
+  let endpoint = '';
+  try {
+    let base;
+    try {
+      base = new URL(config.baseUrl);
+      if (base.username || base.password || base.search || base.hash || base.pathname !== '/' || !['v8', 'v0'].includes(config.apiVersion)) throw new Error();
+      if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname))) throw new Error();
+    } catch { throw new Error('请先保存有效的管理后台根地址和 API 版本。'); }
+    const route = config.apiVersion === 'v8' ? '/credentials' : '/auth-files';
+    const root = `${base.origin}/${config.apiVersion}/management`;
+    endpoint = root + route;
+    const response = await request(root, key ?? managementKey(config), route, undefined, fetcher);
+    if (!Array.isArray(response?.files)) throw new Error('管理接口返回的凭据列表格式不匹配，请检查站点和 API 版本。');
+    return { connected: true, endpoint, elapsedMs: Date.now() - started, message: '管理接口连接与认证成功。', runtime: process.version };
+  } catch (error) {
+    return { connected: false, endpoint, elapsedMs: Date.now() - started, error: error.message, code: error.code || null, status: error.status || null, runtime: process.version };
+  }
 }
 
 const number = value => typeof value === 'number' && Number.isFinite(value);
@@ -183,8 +259,7 @@ export async function queryQuota(force = false) {
   if (pending) return pending;
   pending = (async () => {
     const config = settings();
-    const key = process.env.CLIPROXY_MANAGEMENT_KEY || (config.encryptedKey ? protect(config.encryptedKey, true) : '');
-    if (!key) throw new Error('请先打开额度面板，在设置中填写 CLIProxy 管理密钥。');
+    const key = managementKey(config);
     const value = await collectQuota(config, key);
     cached = { time: Date.now(), value };
     return value;

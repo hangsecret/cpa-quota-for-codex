@@ -696,7 +696,26 @@ internal sealed class PetWindow : Window
                 } catch (Exception exception) { message.Text = exception.Message; }
             });
             body.Children.Add(save); body.Children.Add(message);
-            tabs.Items.Add(Ui.Tab("连接", body));
+            var diagnostics = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 130,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = Ui.Card, Foreground = Ui.Foreground,
+                BorderBrush = Ui.Edge, Padding = new Thickness(8), Margin = new Thickness(0, 10, 0, 0),
+                Text = "使用已保存的管理地址和密钥测试连接。测试结果可选择复制。" };
+            var testConnection = Ui.Button("测试已保存连接", delegate { });
+            testConnection.Margin = new Thickness(0, 12, 0, 0);
+            testConnection.Click += async delegate {
+                testConnection.IsEnabled = false; diagnostics.Text = "正在测试管理接口…";
+                try {
+                    var result = await backend.Call("test_management_connection");
+                    bool connected = Object.Equals(Data.Get(result, "connected"), true);
+                    diagnostics.Text = (connected ? Data.Text(result, "message") : Data.Text(result, "error"))
+                        + "\n接口 " + Data.Text(result, "endpoint") + "\n耗时 " + Data.Text(result, "elapsedMs")
+                        + " ms\n运行时 " + Data.Text(result, "runtime");
+                }
+                catch (Exception exception) { diagnostics.Text = exception.Message; }
+                finally { testConnection.IsEnabled = true; }
+            };
+            body.Children.Add(testConnection); body.Children.Add(diagnostics);
+            tabs.Items.Add(Ui.Tab("连接", new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }));
             var updates = new StackPanel { Margin = new Thickness(20) };
             updates.Children.Add(Ui.Text("CPA Quota for Codex", 16));
             var versions = Ui.Text("当前版本 " + Data.Text(config, "backendVersion"), 12);

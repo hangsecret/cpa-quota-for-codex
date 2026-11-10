@@ -28,6 +28,9 @@ test('desktop bridge isolates its commands and reports unavailable quotas withou
     const settings = (await call('get_console_settings')).result;
     assert.equal(settings.configured, false);
     assert.equal(settings.encryptedKey, undefined);
+    const diagnostic = (await call('test_management_connection')).result;
+    assert.equal(diagnostic.connected, false);
+    assert.equal(diagnostic.endpoint, '');
     const refreshed = (await call('pet_refresh', { model: 'devin/claude-opus-5-5' })).result;
     assert.match(refreshed.error, /管理密钥/);
     assert.equal(refreshed.focus.id, 'devin/claude-opus-5-5');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeQuota, collectQuota, request } from './quota.mjs';
+import { normalizeQuota, collectQuota, request, testManagementConnection } from './quota.mjs';
 
 test('Codex zero usage, full usage, and unknown values', () => {
   const result = normalizeQuota({ rate_limit: { primary_window: { used_percent: 0, reset_at: 1800000000 }, secondary_window: { used_percent: 100 } } }, 'codex');
@@ -78,4 +78,60 @@ test('network errors are sanitized and redirects are refused', async () => {
     assert.equal(options.redirect, 'error');
     throw new Error('sensitive internal detail');
   }), error => !error.message.includes('sensitive'));
+});
+
+test('network diagnostics distinguish DNS, TLS, proxy resets and timeouts without raw errors', async () => {
+  for (const [code, expected] of [
+    ['ENOTFOUND', /DNS/], ['EAI_AGAIN', /DNS/], ['ECONNREFUSED', /拒绝连接/],
+    ['ECONNRESET', /重置/], ['UND_ERR_SOCKET', /提前关闭/],
+    ['ETIMEDOUT', /超时/], ['UND_ERR_CONNECT_TIMEOUT', /超时/],
+    ['CERT_HAS_EXPIRED', /证书已过期/], ['ERR_TLS_CERT_ALTNAME_INVALID', /域名不匹配/],
+    ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', /证书链/],
+  ]) {
+    await assert.rejects(request('https://example.com', 'test-secret', '/credentials', undefined, async () => {
+      throw new TypeError('test-secret', { cause: Object.assign(new Error('test-secret'), { code }) });
+    }), error => expected.test(error.message) && error.code === code && !error.message.includes('test-secret'));
+  }
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => {
+    throw new DOMException('secret', 'TimeoutError');
+  }), /20 秒/);
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => {
+    throw new TypeError('secret', { cause: new Error('unexpected redirect') });
+  }), /重定向/);
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => ({ ok: true, json: async () => {
+    throw new TypeError('secret', { cause: Object.assign(new Error(), { code: 'ECONNRESET' }) });
+  } })), /重置/);
+});
+
+test('management diagnostics report remote policy and temporary IP bans separately', async () => {
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => Response.json({ error: 'remote management disabled' }, { status: 403 })), /allow-remote/);
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => Response.json({ error: 'IP banned due to too many failed attempts. secret' }, { status: 403 })), error => /临时封禁/.test(error.message) && !error.message.includes('secret'));
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => new Response('<html>secret</html>', { status: 403 })), /HTTP 403/);
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => new Response('', { status: 401 })), /管理密钥/);
+});
+
+test('connection test uses one read-only request and returns sanitized diagnostics', async () => {
+  const config = { baseUrl: 'https://example.com', apiVersion: 'v8' };
+  let calls = 0;
+  const ok = await testManagementConnection(config, 'test-secret', async (url, options) => {
+    calls++;
+    assert.equal(url, 'https://example.com/v8/management/credentials');
+    assert.equal(options.method, 'GET');
+    assert.equal(options.headers.Authorization, 'Bearer test-secret');
+    return Response.json({ files: [{ token: 'account-secret' }] });
+  });
+  assert.equal(calls, 1);
+  assert.equal(ok.connected, true);
+  assert(!JSON.stringify(ok).includes('secret'));
+  const failure = await testManagementConnection(config, 'test-secret', async () => {
+    throw new Error('test-secret', { cause: Object.assign(new Error(), { code: 'ENOTFOUND' }) });
+  });
+  assert.equal(failure.connected, false);
+  assert.equal(failure.code, 'ENOTFOUND');
+  assert(!JSON.stringify(failure).includes('test-secret'));
+  assert.equal((await testManagementConnection(config, 'test-secret', async () => Response.json({ files: [] }, { status: 401 }))).status, 401);
+  assert.equal((await testManagementConnection(config, 'test-secret', async () => Response.json({ unrelated: [] }))).connected, false);
+  const unsafe = await testManagementConnection({ ...config, baseUrl: 'https://user:test-secret@example.com/' }, 'key', async () => { throw new Error('Should not fetch'); });
+  assert.equal(unsafe.endpoint, '');
+  assert(!JSON.stringify(unsafe).includes('test-secret'));
 });
