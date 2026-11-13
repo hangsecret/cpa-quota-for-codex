@@ -72,6 +72,13 @@ internal sealed class PetPreferences
 
 internal static class PetBehavior
 {
+    internal static TimeSpan? RefreshDelay(bool failed, bool retryable, int failures)
+    {
+        if (!failed) return TimeSpan.FromMinutes(1);
+        if (!retryable) return null;
+        return TimeSpan.FromMinutes(failures <= 1 ? 1 : failures == 2 ? 2 : 5);
+    }
+
     internal static bool ShouldShow(string scope, bool manuallyHidden, bool codexForeground, bool panelForeground)
     {
         return !manuallyHidden && (scope == "all" || codexForeground || panelForeground);

@@ -45,6 +45,7 @@ class ApiError extends Error {
     super(reason || (status === 401 ? '管理认证失败，请检查管理密钥（HTTP 401）。'
       : status === 403 ? '管理接口拒绝访问，请检查远程管理与 IP 访问限制（HTTP 403）。' : `管理接口返回 HTTP ${status}`));
     this.status = status;
+    this.retryable = status >= 500 && status <= 599;
   }
 }
 
@@ -76,6 +77,7 @@ function networkError(error) {
   }
   const result = new Error(message ? `${message}（${code}）。` : '无法连接管理接口，请检查网络、代理及 HTTPS 证书。');
   result.code = code || 'NETWORK_ERROR';
+  result.retryable = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'UND_ERR_SOCKET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'TIMEOUT'].includes(result.code);
   return result;
 }
 

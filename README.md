@@ -2,13 +2,13 @@
 
 Codex 桌面版的「额度与模型」插件，附带紧凑的 Windows 悬浮窗。查看 CLIProxy 各账户的短周期、长周期剩余额度及重置时间，并跟随当前聊天模型优先显示匹配的账户。
 
-当前版本 **2.9.2**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
+当前版本 **2.9.3**。插件名 `cliproxy-quota`，插件市场名 `cpa-quota`。
 
 ## 快速安装
 
 ### 下载 ZIP 安装
 
-1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.9.2-windows.zip`。
+1. 在 [Releases](https://github.com/hangsecret/cpa-quota-for-codex/releases/latest) 下载 `cpa-quota-for-codex-2.9.3-windows.zip`。
 2. 解压到任意目录，双击 `Install.cmd`。安装器会寻找 Codex CLI 和可用的 Node，注册插件市场并安装插件。
 3. 完全退出并重新打开 Codex 桌面版。在悬浮窗「设置 → 连接」中填写自己的 CLIProxy 管理后台根地址、管理接口版本和管理密钥。
 
@@ -51,7 +51,7 @@ codex plugin add cliproxy-quota@cpa-quota
 - 拉取复用 Codex 当前 `model_provider` 的 `base_url` 和 `env_key`，请求其 `/models` 接口。也支持供应商的 `experimental_bearer_token`，以及明确启用 `requires_openai_auth` 时的本地 API Key。管理密钥用于配额接口，模型列表请求使用模型调用凭据。
 - 指定 `env_key` 时，按进程环境变量、Codex 用户目录的 `.env`、绑定接口的 Windows 加密缓存顺序读取对应密钥。使用 `CODEX_HOME` 时读取该目录中的 `.env`。首次安装即可读取 `.env`，修改文件后可直接点击「拉取模型」重试，原文件继续保留。
 - 模型菜单管理要求 Codex 已配置 `model_catalog_json`，保存后重启 Codex 生效，每次修改前生成 `.cliproxy.bak` 备份。
-- 查询失败时保留旧数据并停止自动查询，手动刷新成功后恢复。
+- 查询失败时保留旧数据。临时网络错误与服务端 5xx 错误按 1、2、5 分钟间隔自动重试，重复失败时维持 5 分钟间隔，并显示下次重试时间。成功后清除错误并恢复每分钟刷新。认证、证书、配置和访问策略错误暂停自动查询，可在处理后手动刷新。
 - 「设置 → 连接 → 测试已保存连接」可使用已保存的管理配置测试认证和连通性，显示接口地址、耗时及脱敏错误。测试只读取一次凭据列表，结果仅包含诊断信息。编辑连接字段后先保存，再测试。
 
 模型调用使用供应商的模型 API 连接，配额使用管理接口，两者可受到不同的代理、证书、路由和访问策略影响。模型能调用时，仍需单独验证管理接口。连接错误会显示 DNS、超时、证书或连接重置等原因；HTTP 401 表示认证失败，HTTP 403 会提示访问限制、远程管理禁用或临时 IP 封禁。

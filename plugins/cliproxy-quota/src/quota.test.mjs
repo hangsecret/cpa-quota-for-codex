@@ -90,14 +90,15 @@ test('network diagnostics distinguish DNS, TLS, proxy resets and timeouts withou
   ]) {
     await assert.rejects(request('https://example.com', 'test-secret', '/credentials', undefined, async () => {
       throw new TypeError('test-secret', { cause: Object.assign(new Error('test-secret'), { code }) });
-    }), error => expected.test(error.message) && error.code === code && !error.message.includes('test-secret'));
+    }), error => expected.test(error.message) && error.code === code && !error.message.includes('test-secret')
+      && error.retryable === !['CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'].includes(code));
   }
   await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => {
     throw new DOMException('secret', 'TimeoutError');
-  }), /20 秒/);
+  }), error => /20 秒/.test(error.message) && error.retryable);
   await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => {
     throw new TypeError('secret', { cause: new Error('unexpected redirect') });
-  }), /重定向/);
+  }), error => /重定向/.test(error.message) && !error.retryable);
   await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => ({ ok: true, json: async () => {
     throw new TypeError('secret', { cause: Object.assign(new Error(), { code: 'ECONNRESET' }) });
   } })), /重置/);
@@ -107,7 +108,8 @@ test('management diagnostics report remote policy and temporary IP bans separate
   await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => Response.json({ error: 'remote management disabled' }, { status: 403 })), /allow-remote/);
   await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => Response.json({ error: 'IP banned due to too many failed attempts. secret' }, { status: 403 })), error => /临时封禁/.test(error.message) && !error.message.includes('secret'));
   await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => new Response('<html>secret</html>', { status: 403 })), /HTTP 403/);
-  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => new Response('', { status: 401 })), /管理密钥/);
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => new Response('', { status: 401 })), error => /管理密钥/.test(error.message) && !error.retryable);
+  await assert.rejects(request('https://example.com', 'secret', '/credentials', undefined, async () => new Response('', { status: 503 })), error => error.status === 503 && error.retryable);
 });
 
 test('connection test uses one read-only request and returns sanitized diagnostics', async () => {

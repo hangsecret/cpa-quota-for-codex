@@ -214,6 +214,8 @@ internal sealed class PetWindow : Window
     private readonly EventWaitHandle showSignal;
     private RegisteredWaitHandle showWait;
     private bool loading;
+    private int refreshFailures;
+    private DateTimeOffset? nextRetry;
     private bool syncing;
     private bool loadingModels;
     private bool closing;
@@ -504,12 +506,16 @@ internal sealed class PetWindow : Window
             var data = await backend.Call("pet_refresh", new { model, refresh = force });
             if (!closing)
             {
-                if (String.IsNullOrEmpty(Data.Text(data, "error"))) refreshTimer.Start();
-                else refreshTimer.Stop();
+                bool failed = !String.IsNullOrEmpty(Data.Text(data, "error"));
+                refreshFailures = failed ? Math.Min(refreshFailures + 1, 3) : 0;
+                var delay = PetBehavior.RefreshDelay(failed, Object.Equals(Data.Get(data, "retryable"), true), refreshFailures);
+                refreshTimer.Stop();
+                nextRetry = failed && delay.HasValue ? (DateTimeOffset?)DateTimeOffset.Now.Add(delay.Value) : null;
+                if (delay.HasValue) { refreshTimer.Interval = delay.Value; refreshTimer.Start(); }
             }
-            if (!closing && model == selectedModel) Apply(data);
+            if (!closing && model == selectedModel) { lastViewKey = null; Apply(data); }
         }
-        catch (Exception exception) { if (!closing) { refreshTimer.Stop(); Error(exception.Message); status.Text = "查询失败"; } }
+        catch (Exception exception) { if (!closing) { refreshTimer.Stop(); nextRetry = null; Error(exception.Message); status.Text = "查询失败"; } }
         finally { loading = false; }
     }
 
@@ -522,7 +528,9 @@ internal sealed class PetWindow : Window
         string modelId = Data.Text(model, "id");
         focus.Text = String.IsNullOrEmpty(modelId) ? "当前模型暂不可用" : modelId;
         focus.ToolTip = Data.Text(model, "label") + "\n" + Data.Text(model, "warning");
-        Error(Data.Text(data, "error"));
+        string problem = Data.Text(data, "error");
+        if (!String.IsNullOrEmpty(problem) && nextRetry.HasValue) problem += "\n下次自动重试 " + nextRetry.Value.ToLocalTime().ToString("HH:mm");
+        Error(problem);
         DateTimeOffset fetched;
         status.Text = DateTimeOffset.TryParse(Data.Text(data, "fetchedAt"), out fetched) ? "更新 " + fetched.ToLocalTime().ToString("HH:mm") : "等待连接";
         if (!String.IsNullOrEmpty(Data.Text(data, "error"))) status.Text = "查询失败 · " + status.Text;

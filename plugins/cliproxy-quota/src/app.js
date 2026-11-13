@@ -51,7 +51,7 @@ async function openPanel() {
 }
 open.onclick = openPanel;
 hostReady = rpc('ui/initialize', {
-  protocolVersion: '2026-01-26', appInfo: { name: 'cliproxy-desktop-launcher', version: '2.9.2' }, appCapabilities: {}
+  protocolVersion: '2026-01-26', appInfo: { name: 'cliproxy-desktop-launcher', version: '2.9.3' }, appCapabilities: {}
 }).then(result => {
   theme(result.hostContext);
   parent.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/initialized', params: {} }, '*');

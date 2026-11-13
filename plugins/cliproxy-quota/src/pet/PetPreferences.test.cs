@@ -48,7 +48,13 @@ internal static class PetPreferencesTests
             Check(PetBehavior.Snap(new Rect(500, 250, 250, 347), area, 20) == new Point(500, 250), "Middle position stays draggable");
             Check(PetBehavior.Snap(new Rect(-1910, 210, 250, 347), new Rect(-1920, 0, 1920, 1040), 20) == new Point(-1920, 210), "Negative-coordinate display snaps");
             Check(PetBehavior.Snap(new Rect(1900, 1000, 250, 347), area, 20) == new Point(1670, 693), "Offscreen drop clamps");
-            Console.WriteLine("23 preference, opacity, visibility and snapping checks passed");
+            Check(PetBehavior.RefreshDelay(false, false, 0) == TimeSpan.FromMinutes(1), "Successful refresh uses the normal interval");
+            Check(PetBehavior.RefreshDelay(true, false, 1) == null, "Authentication and configuration failures stop polling");
+            Check(PetBehavior.RefreshDelay(true, true, 1) == TimeSpan.FromMinutes(1), "First transient failure retries after one minute");
+            Check(PetBehavior.RefreshDelay(true, true, 2) == TimeSpan.FromMinutes(2), "Second failure backs off to two minutes");
+            Check(PetBehavior.RefreshDelay(true, true, 3) == TimeSpan.FromMinutes(5), "Repeated failures back off to five minutes");
+            Check(PetBehavior.RefreshDelay(true, true, 100) == TimeSpan.FromMinutes(5), "Retry delay stays capped");
+            Console.WriteLine("29 preference, opacity, visibility, retry and snapping checks passed");
             return 0;
         }
         finally { Directory.Delete(directory, true); }
