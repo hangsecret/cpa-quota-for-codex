@@ -30,11 +30,12 @@ internal static class PetPreferencesTests
             Check(PetBehavior.TargetOpacity(defaults, TimeSpan.FromHours(1)) == 1, "Fade can be disabled");
             File.WriteAllText(file, "{\"Theme\":\"light\"}");
             var partial = PetPreferences.Load(file);
-            Check(partial.Theme == "light" && partial.ActiveOpacity == 1 && partial.SnapEdges && partial.AutoStart && partial.DisplayScope == "codex", "Older settings preserve new defaults");
+            Check(partial.Theme == "light" && partial.ActiveOpacity == 1 && partial.SnapEdges && partial.AutoStart && partial.AutoRefreshModels && partial.DisplayScope == "codex", "Older settings preserve new defaults");
             partial.ActiveOpacity = 0.7; partial.IdleOpacity = 0.2; partial.AutoFade = false; partial.Topmost = false; partial.AutoStart = false; partial.DisplayScope = "all";
+            partial.AutoRefreshModels = false;
             partial.Save(file);
             var saved = PetPreferences.Load(file);
-            Check(saved.Theme == "light" && saved.ActiveOpacity == 0.7 && saved.IdleOpacity == 0.2 && !saved.AutoFade && !saved.Topmost && !saved.AutoStart && saved.DisplayScope == "all", "Preferences survive restart");
+            Check(saved.Theme == "light" && saved.ActiveOpacity == 0.7 && saved.IdleOpacity == 0.2 && !saved.AutoFade && !saved.Topmost && !saved.AutoStart && !saved.AutoRefreshModels && saved.DisplayScope == "all", "Preferences survive restart");
             saved.IdleOpacity = 0.9; saved.ActiveOpacity = 0.4; saved.Save(file);
             Check(PetPreferences.Load(file).IdleOpacity == 0.4, "Idle opacity cannot exceed active opacity");
             saved.Theme = "unsupported"; saved.ActiveOpacity = Double.NaN; saved.IdleOpacity = -1; saved.Normalize();

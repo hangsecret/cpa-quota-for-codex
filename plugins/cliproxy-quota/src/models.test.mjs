@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { listModels, updateModel, activeModel, publicModels, fetchModels, cacheModelCredentials } from './models.mjs';
+import { listModels, updateModel, activeModel, publicModels, fetchModels, cacheModelCredentials, syncModelReasoning } from './models.mjs';
 
 test('public model list merges account aliases only when a usable shared ID exists', () => {
   const result = publicModels([
@@ -34,20 +34,32 @@ test('model fetching uses current provider API credentials and leaves the menu u
   const original = 'model_provider = "relay"\n[model_providers.other]\nbase_url = "https://wrong.example/v1"\n[model_providers.relay]\nbase_url = "https://relay.example/v1/"\nenv_key = "QUOTA_TEST_MODEL_KEY"\n';
   fs.writeFileSync(configPath, original);
   const result = await fetchModels(async (url, options) => {
-    assert.equal(url, 'https://relay.example/v1/models');
+    assert.equal(url, 'https://relay.example/v1/models?client_version=');
     assert.equal(options.headers.Authorization, 'Bearer test-model-key');
     assert.equal(options.redirect, 'error');
-    return Response.json({ data: [{ id: 'gpt' }, { id: 'account/gpt' }] });
+    return Response.json({ models: [
+      { slug: 'gpt', display_name: 'GPT', supported_reasoning_levels: [{ effort: 'low', description: 'Fast' }, 'high', 'bad-value', 'high'], default_reasoning_level: 'high', arbitrary: 'skip' },
+      { slug: 'account/gpt', supported_reasoning_levels: ['medium'], default_reasoning_level: 'medium' },
+    ] });
   });
-  assert.deepEqual(result.models.map(row => row.id), ['gpt']);
+  assert.deepEqual(result.models, [{ id: 'gpt', name: 'GPT', supported_reasoning_levels: [{ effort: 'low', description: 'Fast' }, { effort: 'high', description: '' }], default_reasoning_level: 'high' }]);
+  const urls = [];
+  const fallback = await fetchModels(async url => {
+    urls.push(url);
+    return url.endsWith('?client_version=') ? new Response('', { status: 400 }) : Response.json({ data: [{ id: 'fallback-model' }] });
+  });
+  assert.deepEqual(urls, ['https://relay.example/v1/models?client_version=', 'https://relay.example/v1/models']);
+  assert.deepEqual(fallback.models, [{ id: 'fallback-model', name: 'fallback-model' }]);
   assert.equal(fs.readFileSync(configPath, 'utf8'), original);
   assert.deepEqual(fs.readdirSync(directory), ['config.toml']);
   assert(!JSON.stringify(result).includes('test-model-key'));
   fs.writeFileSync(configPath, original.replace('[model_providers.relay]', '[model_providers."relay"]'));
   assert.equal((await fetchModels(async () => Response.json({ data: ['gpt'] }))).models.length, 1);
   await assert.rejects(fetchModels(async () => { throw new Error('test-model-key'); }), /无法连接模型接口/);
-  await assert.rejects(fetchModels(async () => new Response('', { status: 401 })), /模型接口认证失败/);
-  await assert.rejects(fetchModels(async () => Response.json({ models: [] })), /模型列表/);
+  let authCalls = 0;
+  await assert.rejects(fetchModels(async () => { authCalls++; return new Response('', { status: 401 }); }), /模型接口认证失败/);
+  assert.equal(authCalls, 1);
+  await assert.rejects(fetchModels(async () => Response.json({ models: {} })), /模型列表/);
   await assert.rejects(fetchModels(async () => new Response('<html>')), /有效 JSON/);
   await assert.rejects(fetchModels(async () => new Response('', { status: 500 })), /HTTP 500/);
   if (process.platform === 'win32') {
@@ -108,7 +120,7 @@ test('first install reads the configured key from Codex .env without a process v
   assert(!fs.existsSync(data));
   let expectedKey = 'first#test=value';
   const fetcher = async (url, options) => {
-    assert.equal(url, 'https://relay.example/v1/models');
+    assert.equal(url, 'https://relay.example/v1/models?client_version=');
     assert.equal(options.headers.Authorization, `Bearer ${expectedKey}`);
     return Response.json({ data: [{ id: 'gpt-test' }] });
   };
@@ -173,6 +185,96 @@ test('model management preserves existing capabilities and protects the default'
     else process.env.CLIPROXY_CODEX_HOME = originalHome;
     if (originalLogs === undefined) delete process.env.CLIPROXY_CODEX_LOGS;
     else process.env.CLIPROXY_CODEX_LOGS = originalLogs;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('moving a visible model persists the exact menu order while preserving hidden models and settings', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-model-order-'));
+  const previous = process.env.CLIPROXY_CODEX_HOME;
+  process.env.CLIPROXY_CODEX_HOME = directory;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CLIPROXY_CODEX_HOME; else process.env.CLIPROXY_CODEX_HOME = previous;
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const config = path.join(directory, 'config.toml');
+  const configText = 'model = "second"\nmodel_catalog_json = "models.json"\n';
+  fs.writeFileSync(config, configText);
+  const catalogPath = path.join(directory, 'models.json');
+  const hidden = { slug: 'hidden', visibility: 'hide', priority: 1 };
+  const reserved = { slug: 'gpt-reserve', visibility: 'list', priority: 99 };
+  const initial = { models: [
+    { slug: 'last', visibility: 'list', priority: 12 },
+    hidden,
+    { slug: 'first', visibility: 'list', priority: 1 },
+    { slug: 'second', visibility: 'list', priority: 1, default_reasoning_level: 'high' },
+    reserved,
+  ] };
+  const original = JSON.stringify(initial);
+  fs.writeFileSync(catalogPath, original);
+  const order = state => state.models.filter(m => m.enabled).map(m => m.id);
+  assert.deepEqual(order(listModels()), ['first', 'second', 'last']);
+  const moved = updateModel({ action: 'move-up', id: 'second' });
+  assert.deepEqual(order(moved), ['second', 'first', 'last']);
+  assert.equal(moved.models[0].current, true);
+  assert.equal(moved.models[0].canMoveUp, false);
+  assert.equal(moved.models[0].canMoveDown, true);
+  assert.equal(moved.models[2].canMoveDown, false);
+  assert.equal(moved.models[3].canMoveUp, false);
+  const saved = fs.readFileSync(catalogPath, 'utf8');
+  const savedModels = JSON.parse(saved).models;
+  assert.deepEqual(savedModels.map(m => m.priority), [2, 1, 1, 0, 99]);
+  assert.deepEqual(savedModels[1], hidden);
+  assert.deepEqual(savedModels[4], reserved);
+  assert.equal(savedModels[3].default_reasoning_level, 'high');
+  assert.equal(fs.readFileSync(config, 'utf8'), configText);
+  assert.equal(fs.readFileSync(catalogPath + '.cliproxy.bak', 'utf8'), original);
+  assert.throws(() => updateModel({ action: 'move-down', id: 'hidden' }), /已显示/);
+  updateModel({ action: 'move-up', id: 'second' });
+  assert.equal(fs.readFileSync(catalogPath, 'utf8'), saved);
+  assert.equal(fs.readFileSync(catalogPath + '.cliproxy.bak', 'utf8'), original);
+  updateModel({ action: 'move-down', id: 'second' });
+  assert.deepEqual(order(listModels()), ['first', 'second', 'last']);
+});
+
+test('a provider refresh updates reasoning on exact existing routes and offers it for checkbox adds', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-model-reasoning-'));
+  const previous = process.env.CLIPROXY_CODEX_HOME;
+  process.env.CLIPROXY_CODEX_HOME = directory;
+  try {
+    const catalog = path.join(directory, 'models.json');
+    fs.writeFileSync(path.join(directory, 'config.toml'), 'model = "gpt-6.1-sol"\nmodel_catalog_json = "models.json"\n');
+    const gpt = { slug: 'gpt-6.1-sol', visibility: 'list', default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'high', description: 'Old' }], model_messages: { instructions_template: 'local' } };
+    const hidden = { slug: 'account/gpt-6.1-sol', visibility: 'hide' };
+    const absent = { slug: 'local-manual', visibility: 'list', default_reasoning_level: 'xhigh' };
+    const original = JSON.stringify({ models: [gpt, hidden, absent], extra: 'keep' });
+    fs.writeFileSync(catalog, original);
+    const rows = [
+      { slug: gpt.slug, supported_reasoning_levels: ['low', 'high', 'ultra'], default_reasoning_level: 'low' },
+      { slug: hidden.slug, supported_reasoning_levels: ['medium', 'high'], default_reasoning_level: 'high' },
+      { slug: absent.slug, supported_reasoning_levels: ['not-a-level'], default_reasoning_level: 'not-a-level' },
+      { slug: 'devin/new', supported_reasoning_levels: ['medium', 'high', 'max'], default_reasoning_level: 'medium' },
+    ];
+    const offered = publicModels(rows, { origin: 'https://ai.hangsecret.cn', includeAliases: true });
+    assert.equal(syncModelReasoning(offered).updatedReasoning, 2);
+    const changed = JSON.parse(fs.readFileSync(catalog, 'utf8'));
+    assert.equal(changed.extra, 'keep');
+    assert.equal(changed.models.length, 3);
+    assert.deepEqual(changed.models[0].supported_reasoning_levels.map(x => x.effort), ['low', 'high']);
+    assert.equal(changed.models[0].default_reasoning_level, 'low');
+    assert.deepEqual(changed.models[0].model_messages, gpt.model_messages);
+    assert.equal(changed.models[1].visibility, 'hide');
+    assert.equal(changed.models[1].default_reasoning_level, 'high');
+    assert.deepEqual(changed.models[2], absent);
+    assert.deepEqual(publicModels(rows).find(row => row.id === gpt.slug).supported_reasoning_levels.map(x => x.effort), ['low', 'high', 'ultra']);
+    assert.equal(syncModelReasoning(offered).updatedReasoning, 0);
+    assert.equal(fs.readFileSync(catalog + '.cliproxy.bak', 'utf8'), original);
+    updateModel({ action: 'add', id: 'devin/new' }, offered.find(row => row.id === 'devin/new'));
+    const added = JSON.parse(fs.readFileSync(catalog, 'utf8')).models.at(-1);
+    assert.equal(added.default_reasoning_level, 'medium');
+    assert.deepEqual(added.supported_reasoning_levels.map(x => x.effort), ['medium', 'high', 'max']);
+  } finally {
+    if (previous === undefined) delete process.env.CLIPROXY_CODEX_HOME; else process.env.CLIPROXY_CODEX_HOME = previous;
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -203,6 +203,12 @@ internal sealed class PetWindow : Window
     private readonly TextBlock error = Ui.Text("", 11, Ui.Warning);
     private readonly TextBlock updateNotice = Ui.Text("", 10, Ui.Accent);
     private readonly DispatcherTimer updateTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(6) };
+    private readonly DispatcherTimer modelRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
+    private event Action ModelDiscoveryChanged;
+    private object modelDiscovery;
+    private string modelDiscoveryError;
+    private bool discoveringModels;
+    private bool modelChangesPending;
     private object updateInfo;
     private bool checkingUpdates;
     private bool installingUpdate;
@@ -322,13 +328,15 @@ internal sealed class PetWindow : Window
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, delegate { Dispatcher.BeginInvoke(new Action(ShowPanel)); }, null, -1, false);
         Loaded += async delegate { PositionRight(); UpdateDisplayScope(); UpdateOpacity(); appearanceTimer.Start(); if (ready != null) ready(); if (backend != null) { await LoadModels(); await Refresh(false); focusTimer.Start(); } };
         Loaded += async delegate { if (backend != null) { await CheckUpdates(false); if (!closing) updateTimer.Start(); } };
+        Loaded += async delegate { if (backend != null && preferences.AutoRefreshModels) await PullModels(); };
+        modelRefreshTimer.Tick += async delegate { await PullModels(); };
         updateTimer.Tick += async delegate { await CheckUpdates(false); };
         appearanceTimer.Tick += delegate { UpdateDisplayScope(); UpdateOpacity(); };
         MouseEnter += delegate { lastNear = DateTime.UtcNow; UpdateOpacity(); };
         SizeChanged += delegate { if (IsLoaded && !dragging && preferences.SnapEdges) SnapToEdge(false); };
         focusTimer.Tick += async delegate { await Sync(); };
         refreshTimer.Tick += async delegate { await Refresh(false); };
-        Closed += delegate { closing = true; Program.RecordRuntime(!closingWithCodex); focusTimer.Stop(); refreshTimer.Stop(); appearanceTimer.Stop(); updateTimer.Stop(); showWait.Unregister(null); tray.Visible = false; tray.Dispose(); applicationIcon.Dispose(); if (backend != null) backend.Dispose(); };
+        Closed += delegate { closing = true; Program.RecordRuntime(!closingWithCodex); focusTimer.Stop(); refreshTimer.Stop(); appearanceTimer.Stop(); updateTimer.Stop(); modelRefreshTimer.Stop(); showWait.Unregister(null); tray.Visible = false; tray.Dispose(); applicationIcon.Dispose(); if (backend != null) backend.Dispose(); };
     }
 
     internal void CloseWithCodex()
@@ -468,11 +476,38 @@ internal sealed class PetWindow : Window
         finally { openDialogs--; lastNear = DateTime.UtcNow; UpdateOpacity(); }
     }
 
-    private async Task LoadModels()
+    private async Task PullModels()
+    {
+        if (closing || discoveringModels) return;
+        modelRefreshTimer.Stop();
+        discoveringModels = true;
+        if (ModelDiscoveryChanged != null) ModelDiscoveryChanged();
+        try
+        {
+            var result = await backend.Call("fetch_models", new { syncReasoning = true });
+            if (closing) return;
+            modelDiscovery = result;
+            modelDiscoveryError = null;
+            if (Convert.ToInt32(Data.Get(result, "updatedReasoning")) > 0) modelChangesPending = true;
+        }
+        catch (Exception exception) { modelDiscoveryError = exception.Message; }
+        finally
+        {
+            discoveringModels = false;
+            if (!closing)
+            {
+                if (preferences.AutoRefreshModels) modelRefreshTimer.Start();
+                if (ModelDiscoveryChanged != null) ModelDiscoveryChanged();
+            }
+        }
+    }
+
+    private async Task LoadModels(object data = null)
     {
         try
         {
-            var data = await backend.Call("list_models");
+            if (data == null) data = await backend.Call("list_models");
+            if (closing) return;
             loadingModels = true;
             modelPicker.Items.Clear();
             modelPicker.Items.Add(new ModelChoice { Id = "", Name = "跟随当前聊天模型" });
@@ -672,7 +707,7 @@ internal sealed class PetWindow : Window
                     var next = new PetPreferences { Theme = theme.SelectedIndex == 1 ? "light" : "dark", ActiveOpacity = active.Value,
                         IdleOpacity = idle.Value, AutoFade = fade.IsChecked == true, SnapEdges = snap.IsChecked == true,
                         Topmost = top.IsChecked == true, AllAccounts = all.IsChecked == true, AutoStart = autoStart.IsChecked == true,
-                        DisplayScope = scope.SelectedIndex == 1 ? "all" : "codex" };
+                        DisplayScope = scope.SelectedIndex == 1 ? "all" : "codex", AutoRefreshModels = preferences.AutoRefreshModels };
                     next.Save(PreferencesFile);
                     preferences = next;
                     Ui.ApplyTheme(next.Theme);
@@ -796,11 +831,14 @@ internal sealed class PetWindow : Window
             var toolbar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
             var fetch = Ui.Button("拉取模型", delegate { });
             DockPanel.SetDock(fetch, Dock.Right); toolbar.Children.Add(fetch);
-            toolbar.Children.Add(Ui.Text("中转站模型", 13));
+            toolbar.Children.Add(Ui.Text("Codex 模型菜单", 13));
             header.Children.Add(toolbar);
             var search = Ui.Input();
             search.ToolTip = "搜索模型名称或 ID";
             header.Children.Add(search);
+            var autoRefresh = new CheckBox { Content = "每 5 分钟自动拉取并同步推理档位", IsChecked = preferences.AutoRefreshModels,
+                Foreground = Ui.Foreground, Margin = new Thickness(0, 6, 0, 8) };
+            header.Children.Add(autoRefresh);
             DockPanel.SetDock(header, Dock.Top);
             body.Children.Add(header);
             var bottom = new StackPanel();
@@ -809,10 +847,17 @@ internal sealed class PetWindow : Window
             var id = Ui.Input(); manual.Children.Add(id);
             manual.Children.Add(Ui.Text("显示名称（选填）", 11, Ui.Muted));
             var name = Ui.Input(); manual.Children.Add(name);
-            var message = Ui.Text("勾选添加或启用模型，取消勾选隐藏；重启 Codex 生效。", 11, Ui.Muted); message.TextWrapping = TextWrapping.Wrap;
+            const string modelGuide = "勾选显示，取消勾选隐藏。用 ↑ ↓ 调整完整菜单顺序。";
+            var message = Ui.Text(modelGuide, 11, Ui.Muted); message.TextWrapping = TextWrapping.Wrap;
+            var pending = Ui.Text("已保存本地改动，完全退出并重新打开 Codex 后，原生菜单生效。", 11, Ui.Warning);
+            pending.TextWrapping = TextWrapping.Wrap;
+            pending.Visibility = modelChangesPending ? Visibility.Visible : Visibility.Collapsed;
             var list = new StackPanel();
-            var offered = new List<object>();
+            var lastDiscovery = modelDiscovery;
+            var offered = Data.Rows(Data.Get(lastDiscovery, "models")).ToList();
             object modelState = null;
+            bool editing = false;
+            Func<object, Task> saveModel = null;
             Action<object> render = null;
             render = state => {
                 modelState = state;
@@ -826,51 +871,112 @@ internal sealed class PetWindow : Window
                     string modelId = Data.Text(row, "id");
                     string modelName = Data.Text(row, "name");
                     bool exists = known.Contains(modelId);
+                    bool enabled = Object.Equals(Data.Get(row, "enabled"), true);
                     var label = Ui.Text(modelName + (exists ? "" : " · 待添加"), 11);
                     label.TextWrapping = TextWrapping.Wrap;
-                    var toggle = new CheckBox { Content = label, ToolTip = modelId, IsChecked = Object.Equals(Data.Get(row, "enabled"), true),
+                    var toggle = new CheckBox { Content = label, ToolTip = modelId, IsChecked = enabled,
                         IsEnabled = !Object.Equals(Data.Get(row, "current"), true), Foreground = Ui.Foreground, Margin = new Thickness(0, 6, 0, 6), MaxWidth = 320 };
                     toggle.Click += async delegate {
-                        list.IsEnabled = false;
-                        try {
-                            string action = toggle.IsChecked == true ? (exists ? "enable" : "add") : "disable";
-                            render(await backend.Call("update_model", new { action, id = modelId, name = modelName }));
-                            message.Text = "已保存模型菜单，请重启 Codex 生效。";
-                            await LoadModels();
-                        }
-                        catch (Exception exception) { toggle.IsChecked = !toggle.IsChecked; message.Text = exception.Message; }
-                        finally { list.IsEnabled = true; }
+                        try { await saveModel(new { action = toggle.IsChecked == true ? (exists ? "enable" : "add") : "disable", id = modelId, name = modelName }); }
+                        catch (Exception exception) { message.Text = exception.Message; }
                     };
-                    list.Children.Add(toggle);
+                    var modelRow = new DockPanel();
+                    if (enabled)
+                    {
+                        var order = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+                        Func<string, string, string, string, Button> moveButton = (symbol, caption, action, capability) => {
+                            var button = Ui.Button(symbol, async delegate {
+                                try { await saveModel(new { action, id = modelId }); }
+                                catch (Exception exception) { message.Text = exception.Message; }
+                            }, caption + "（按完整菜单顺序）");
+                            System.Windows.Automation.AutomationProperties.SetName(button, caption + " " + modelName);
+                            button.IsEnabled = Object.Equals(Data.Get(row, capability), true);
+                            return button;
+                        };
+                        order.Children.Add(moveButton("↑", "上移", "move-up", "canMoveUp"));
+                        order.Children.Add(moveButton("↓", "下移", "move-down", "canMoveDown"));
+                        DockPanel.SetDock(order, Dock.Right);
+                        modelRow.Children.Add(order);
+                    }
+                    modelRow.Children.Add(toggle);
+                    list.Children.Add(modelRow);
                 }
+            };
+            saveModel = async args => {
+                editing = true; list.IsEnabled = false; manual.IsEnabled = false;
+                try
+                {
+                    var state = await backend.Call("update_model", args);
+                    modelChangesPending = true;
+                    pending.Visibility = Visibility.Visible;
+                    message.Text = modelGuide;
+                    render(state);
+                    await LoadModels(state);
+                }
+                catch { render(modelState); throw; }
+                finally { editing = false; list.IsEnabled = true; manual.IsEnabled = true; }
             };
             search.TextChanged += delegate { if (modelState != null) render(modelState); };
             manual.Children.Add(Ui.Button("添加到菜单", async delegate {
-                try { render(await backend.Call("update_model", new { action = "add", id = id.Text.Trim(), name = name.Text.Trim() })); id.Clear(); name.Clear(); await LoadModels(); }
+                try { await saveModel(new { action = "add", id = id.Text.Trim(), name = name.Text.Trim() }); id.Clear(); name.Clear(); }
                 catch (Exception exception) { message.Text = exception.Message; }
             }));
             bottom.Children.Add(new Expander { Header = "手动添加模型", Content = manual, Foreground = Ui.Foreground, Margin = new Thickness(0, 10, 0, 8) });
             var fetched = Ui.Text("", 10, Ui.Muted); fetched.TextWrapping = TextWrapping.Wrap;
             bottom.Children.Add(fetched);
+            bottom.Children.Add(pending);
             bottom.Children.Add(message); DockPanel.SetDock(bottom, Dock.Bottom); body.Children.Add(bottom);
             body.Children.Add(new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-            bool pulling = false;
-            Func<Task> pull = async delegate {
-                if (pulling) return;
-                pulling = true; fetch.IsEnabled = false; fetched.Text = "正在从中转站拉取公共模型…";
-                try {
-                    var remote = await backend.Call("fetch_models");
-                    offered = Data.Rows(Data.Get(remote, "models")).ToList();
-                    render(modelState);
-                    fetched.Text = "已拉取 " + offered.Count + " 个模型，已合并可匹配的账号前缀重复项。";
-                    fetched.ToolTip = Data.Text(remote, "source");
+            Action showDiscovery = delegate {
+                fetch.IsEnabled = !discoveringModels;
+                pending.Visibility = modelChangesPending ? Visibility.Visible : Visibility.Collapsed;
+                if (!Object.ReferenceEquals(lastDiscovery, modelDiscovery))
+                {
+                    lastDiscovery = modelDiscovery;
+                    var next = Data.Rows(Data.Get(lastDiscovery, "models")).ToList();
+                    Func<object, string> key = row => Data.Text(row, "id") + "\n" + Data.Text(row, "name");
+                    bool changed = !offered.Select(key).SequenceEqual(next.Select(key));
+                    offered = next;
+                    if (changed && !editing) render(modelState);
                 }
-                catch (Exception exception) { fetched.Text = "拉取失败。" + exception.Message; }
-                finally { pulling = false; fetch.IsEnabled = true; }
+                DateTimeOffset checkedAt;
+                string summary = DateTimeOffset.TryParse(Data.Text(lastDiscovery, "fetchedAt"), out checkedAt)
+                    ? "上次成功 " + checkedAt.ToLocalTime().ToString("HH:mm") + " · " + offered.Count + " 个模型"
+                    : "尚未拉取模型";
+                if (discoveringModels) fetched.Text = summary + " · 正在拉取…";
+                else if (modelDiscoveryError != null) fetched.Text = summary + " · 拉取失败：" + modelDiscoveryError;
+                else if (lastDiscovery == null) fetched.Text = summary;
+                else
+                {
+                    string syncError = Data.Text(lastDiscovery, "syncError");
+                    int updated = Convert.ToInt32(Data.Get(lastDiscovery, "updatedReasoning"));
+                    fetched.Text = summary;
+                    if (!String.IsNullOrEmpty(syncError)) fetched.Text += " · 推理档位同步失败：" + syncError;
+                    else if (updated > 0) fetched.Text += " · 已同步 " + updated + " 个模型的推理档位";
+                    else if (Convert.ToInt32(Data.Get(lastDiscovery, "withReasoning")) == 0) fetched.Text += " · 中转站未提供推理档位";
+                }
             };
-            fetch.Click += async delegate { await pull(); };
-            dialog.Loaded += async delegate { await pull(); };
-            render(await backend.Call("list_models")); dialog.Content = body; PresentDialog(dialog);
+            fetch.Click += async delegate { await PullModels(); };
+            autoRefresh.Click += async delegate {
+                bool previous = preferences.AutoRefreshModels;
+                preferences.AutoRefreshModels = autoRefresh.IsChecked == true;
+                try { preferences.Save(PreferencesFile); }
+                catch (Exception exception)
+                {
+                    preferences.AutoRefreshModels = previous; autoRefresh.IsChecked = previous;
+                    message.Text = exception.Message; return;
+                }
+                if (preferences.AutoRefreshModels) await PullModels();
+                else modelRefreshTimer.Stop();
+            };
+            var initial = await backend.Call("list_models");
+            if (closing) return;
+            render(initial);
+            showDiscovery();
+            dialog.Content = body;
+            ModelDiscoveryChanged += showDiscovery;
+            try { PresentDialog(dialog); }
+            finally { ModelDiscoveryChanged -= showDiscovery; }
         }
         catch (Exception exception) { Error(exception.Message); }
     }

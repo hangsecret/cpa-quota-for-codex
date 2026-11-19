@@ -13,6 +13,7 @@ internal sealed class PetPreferences
     public bool Topmost { get; set; }
     public bool AllAccounts { get; set; }
     public bool AutoStart { get; set; }
+    public bool AutoRefreshModels { get; set; }
     public string DisplayScope { get; set; }
 
     public PetPreferences()
@@ -24,6 +25,7 @@ internal sealed class PetPreferences
         SnapEdges = true;
         Topmost = true;
         AutoStart = true;
+        AutoRefreshModels = true;
         DisplayScope = "codex";
     }
 

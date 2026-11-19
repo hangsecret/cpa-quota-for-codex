@@ -21,7 +21,7 @@ export const tools = [
   { name: 'list_models', description: '读取 Codex 模型菜单的显示状态。', inputSchema: emptySchema, annotations: readOnly },
   { name: 'fetch_models', description: '从 Codex 当前中转站拉取公共模型，合并账号前缀重复项。', inputSchema: emptySchema, annotations: { ...readOnly, openWorldHint: true }, _meta: appOnly },
   { name: 'get_model_focus', description: '自动定位桌面最近激活的聊天视图并读取保存的模型，也可显式查询指定聊天。', inputSchema: { type: 'object', properties: { threadId: { type: 'string' } }, additionalProperties: false }, annotations: readOnly, _meta: appOnly },
-  { name: 'update_model', description: '按用户操作添加模型，或启用、取消模型在 Codex 下拉菜单中的显示。', inputSchema: { type: 'object', properties: { action: { enum: ['add', 'enable', 'disable'] }, id: { type: 'string' }, name: { type: 'string' } }, required: ['action', 'id'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, _meta: appOnly }
+  { name: 'update_model', description: '按用户操作添加、显示、隐藏模型，或调整模型在 Codex 下拉菜单中的顺序。', inputSchema: { type: 'object', properties: { action: { enum: ['add', 'enable', 'disable', 'move-up', 'move-down'] }, id: { type: 'string' }, name: { type: 'string' } }, required: ['action', 'id'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, _meta: appOnly }
 ];
 function publicSettings() {
   const config = settings();

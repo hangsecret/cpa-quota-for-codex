@@ -1,5 +1,5 @@
 import readline from 'node:readline';
-import { activeModel } from './models.mjs';
+import { activeModel, fetchModels, mergeModelAliases, syncModelReasoning, updateModel } from './models.mjs';
 import { queryQuota } from './quota.mjs';
 import { execute } from './server.mjs';
 import { groupAccounts } from './presentation.mjs';
@@ -9,6 +9,7 @@ import { updater } from './updates.mjs';
 let quota;
 let quotaError;
 let quotaRetryable = false;
+let offeredModels = new Map();
 function view(args) {
   const focus = args.model ? { id: args.model, label: '手动指定' } : activeModel();
   const groups = groupAccounts(quota?.accounts || [], focus.id);
@@ -24,7 +25,20 @@ async function dispatch(method, args = {}) {
     catch (error) { quotaError = error.message; quotaRetryable = error.retryable === true; }
     return view(args);
   }
-  if (['get_console_settings', 'save_console_settings', 'test_management_connection', 'list_models', 'fetch_models', 'update_model'].includes(method)) return execute(method, args);
+  if (method === 'fetch_models') {
+    const remote = await fetchModels(undefined, undefined, { includeAliases: true });
+    offeredModels = new Map(remote.models.map(row => [row.id, row]));
+    const models = mergeModelAliases(remote.models);
+    const withReasoning = remote.models.filter(row => row.supported_reasoning_levels?.length).length;
+    const result = { ...remote, models, withReasoning, updatedReasoning: 0 };
+    if (args.syncReasoning === true && withReasoning) {
+      try { result.updatedReasoning = syncModelReasoning(remote.models).updatedReasoning; }
+      catch (error) { result.syncError = error.message; }
+    }
+    return result;
+  }
+  if (method === 'update_model') return updateModel(args, offeredModels.get(args.id));
+  if (['get_console_settings', 'save_console_settings', 'test_management_connection', 'list_models'].includes(method)) return execute(method, args);
   throw new Error('未知桌面面板操作。');
 }
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
